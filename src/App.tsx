@@ -5,6 +5,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import MainLayout from './components/layout/MainLayout';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
+import GeneralLedger from './pages/GeneralLedger';
 import Suppliers from './pages/Suppliers';
 import ASINs from './pages/ASINs';
 import Budget from './pages/Budget';
@@ -22,6 +23,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/transactions" element={<Transactions />} />
+                <Route path="/general-ledger" element={<GeneralLedger />} />
                 <Route path="/suppliers" element={<Suppliers />} />
                 <Route path="/asins" element={<ASINs />} />
                 <Route path="/budget" element={<Budget />} />

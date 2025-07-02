@@ -1,6 +1,6 @@
 // CSV helper functions for ASIN management
 export const generateASINTemplate = (): string => {
-  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand'];
+  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category'];
   return headers.join(',') + '\n';
 };
 
@@ -60,6 +60,10 @@ export const validateASINData = (data: any): { isValid: boolean; errors: string[
   if (data.size && isNaN(parseInt(data.size))) {
     errors.push('Size must be a valid number');
   }
+
+  if (data.category && !['Stock', 'Other'].includes(data.category)) {
+    errors.push('Category must be either "Stock" or "Other"');
+  }
   
   return {
     isValid: errors.length === 0,
@@ -87,7 +91,8 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
     { name: 'title', variations: ['title'] },
     { name: 'type', variations: ['type'] },
     { name: 'size', variations: ['size'] },
-    { name: 'brand', variations: ['brand'] }
+    { name: 'brand', variations: ['brand'] },
+    { name: 'category', variations: ['category'] }
   ];
   
   // Find column indices using improved matching
@@ -110,7 +115,7 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
   
   // Check for missing required headers
   const missingHeaders = expectedHeaders
-    .filter(expected => !foundHeaders.includes(expected.name))
+    .filter(expected => expected.name !== 'category' && !foundHeaders.includes(expected.name))
     .map(expected => expected.name);
   
   if (missingHeaders.length > 0) {
@@ -133,7 +138,8 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
       title: values[columnIndices.title]?.replace(/"/g, '').trim() || '',
       type: values[columnIndices.type]?.replace(/"/g, '').trim() || 'Single',
       pack: parseInt(values[columnIndices.size]?.replace(/"/g, '').trim()) || 1,
-      brand: values[columnIndices.brand]?.replace(/"/g, '').trim() || ''
+      brand: values[columnIndices.brand]?.replace(/"/g, '').trim() || '',
+      category: values[columnIndices.category]?.replace(/"/g, '').trim() || 'Stock'
     };
     
     const validation = validateASINData(rowData);

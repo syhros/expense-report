@@ -5,7 +5,7 @@ import { useASINsWithMetrics } from '../hooks/useData';
 import { updateASIN } from '../services/database';
 import { formatCurrency } from '../utils/formatters';
 
-type FilterCategory = 'all' | 'in-stock' | 'low-stock' | 'out-of-stock';
+type FilterCategory = 'all' | 'in-stock' | 'low-stock' | 'out-of-stock' | 'in-warehouse';
 
 const Inventory: React.FC = () => {
   const { asins, loading, error, refetch } = useASINsWithMetrics();
@@ -28,6 +28,8 @@ const Inventory: React.FC = () => {
           return asin.adjustedQuantity > 0 && asin.adjustedQuantity <= 5;
         case 'out-of-stock':
           return asin.adjustedQuantity === 0;
+        case 'in-warehouse':
+          return asin.stored > 0;
         default:
           return true;
       }
@@ -41,6 +43,7 @@ const Inventory: React.FC = () => {
   const inStockCount = asins.filter(asin => asin.adjustedQuantity > 5).length;
   const lowStockCount = asins.filter(asin => asin.adjustedQuantity > 0 && asin.adjustedQuantity <= 5).length;
   const outOfStockCount = asins.filter(asin => asin.adjustedQuantity === 0).length;
+  const inWarehouseCount = asins.filter(asin => asin.stored > 0).length;
 
   const handleItemClick = (asinId: string) => {
     setSelectedItem(asinId);
@@ -175,7 +178,7 @@ const Inventory: React.FC = () => {
           </div>
           
           {/* Clickable Summary Statistics */}
-          <div className="grid grid-cols-4 gap-6 flex-1 max-w-4xl">
+          <div className="grid grid-cols-5 gap-6 flex-1 max-w-5xl">
             <div 
               className={getFilterButtonClass('all')}
               onClick={() => setActiveFilter('all')}
@@ -227,6 +230,19 @@ const Inventory: React.FC = () => {
                 <p className="text-2xl font-bold mt-1">{outOfStockCount}</p>
               </div>
             </div>
+
+            <div 
+              className={getFilterButtonClass('in-warehouse')}
+              onClick={() => setActiveFilter('in-warehouse')}
+            >
+              <div className="text-center">
+                <div className="p-2 bg-purple-600/80 backdrop-blur-sm rounded-lg w-fit mx-auto mb-2">
+                  <Warehouse className="h-5 w-5 text-white" />
+                </div>
+                <p className="text-sm font-medium">In Warehouse</p>
+                <p className="text-2xl font-bold mt-1">{inWarehouseCount}</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -262,116 +278,130 @@ const Inventory: React.FC = () => {
         </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-          {filteredAsins.map((asin) => (
-            <Card 
-              key={asin.id} 
-              className={`overflow-hidden hover:bg-white/15 transition-all duration-300 group cursor-pointer ${
-                selectedItem === asin.id ? 'ring-2 ring-blue-500' : ''
-              }`}
-              onClick={() => handleItemClick(asin.id)}
-            >
-              {/* Product Image */}
-              <div className="aspect-square bg-gray-700/50 backdrop-blur-sm relative overflow-hidden">
-                {asin.image_url ? (
-                  <img
-                    src={asin.image_url}
-                    alt={asin.title || 'Product'}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none';
-                      e.currentTarget.nextElementSibling!.style.display = 'flex';
-                    }}
-                  />
-                ) : null}
-                <div className={`absolute inset-0 flex items-center justify-center ${asin.image_url ? 'hidden' : 'flex'}`}>
-                  <Warehouse className="h-16 w-16 text-gray-500" />
-                </div>
-                
-                {/* Stock Level Badge */}
-                <div className="absolute top-3 right-3">
-                  <div className={`px-2 py-1 rounded-full text-xs font-medium backdrop-blur-sm ${
-                    asin.adjustedQuantity > 10 
-                      ? 'bg-green-600/80 text-green-100' 
-                      : asin.adjustedQuantity > 0 
-                        ? 'bg-yellow-600/80 text-yellow-100' 
-                        : 'bg-red-600/80 text-red-100'
-                  }`}>
-                    {asin.adjustedQuantity} units
+          {filteredAsins.map((asin) => {
+            // Calculate average profit for this ASIN
+            const averageProfit = asin.averageBuyPrice > 0 ? 
+              (asin.averageBuyPrice * 0.3) : 0; // Mock calculation - would need real data
+            
+            return (
+              <Card 
+                key={asin.id} 
+                className={`overflow-hidden hover:bg-white/15 transition-all duration-300 group cursor-pointer ${
+                  selectedItem === asin.id ? 'ring-2 ring-blue-500' : ''
+                }`}
+                onClick={() => handleItemClick(asin.id)}
+              >
+                {/* Product Image */}
+                <div className="aspect-square bg-gray-700/50 backdrop-blur-sm relative overflow-hidden">
+                  {asin.image_url ? (
+                    <img
+                      src={asin.image_url}
+                      alt={asin.title || 'Product'}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        e.currentTarget.nextElementSibling!.style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  <div className={`absolute inset-0 flex items-center justify-center ${asin.image_url ? 'hidden' : 'flex'}`}>
+                    <Warehouse className="h-16 w-16 text-gray-500" />
                   </div>
-                </div>
-              </div>
-
-              {/* Product Details */}
-              <div className="p-4">
-                {/* Title and ASIN */}
-                <div className="mb-3">
-                  <h3 className="text-white font-medium text-sm leading-tight mb-1 line-clamp-2">
-                    {asin.title || 'No title'}
-                  </h3>
-                  <a 
-                    href={`https://www.amazon.co.uk/dp/${asin.asin}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 text-xs font-mono transition-colors duration-300"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {asin.asin}
-                  </a>
-                </div>
-
-                {/* COG */}
-                <div className="mb-3">
-                  <p className="text-gray-400 text-xs">Average COG</p>
-                  <p className="text-white font-semibold">{formatCurrency(asin.averageBuyPrice)}</p>
-                </div>
-
-                {/* Stock Information */}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-2">
-                    <p className="text-xs text-gray-400">Total</p>
-                    <p className="text-sm font-semibold text-white">{asin.adjustedQuantity}</p>
-                  </div>
-                  <div className="bg-blue-900/30 backdrop-blur-sm rounded-lg p-2">
-                    <p className="text-xs text-blue-400">Shipped</p>
-                    <p className="text-sm font-semibold text-blue-300">{asin.shipped}</p>
-                  </div>
-                  <div className="bg-green-900/30 backdrop-blur-sm rounded-lg p-2">
-                    <p className="text-xs text-green-400">Inv</p>
-                    <p className="text-sm font-semibold text-green-300">{asin.stored}</p>
+                  
+                  {/* Stock Level Badge */}
+                  <div className="absolute top-3 right-3">
+                    <div className={`px-2 py-1 rounded-full text-xs font-medium backdrop-blur-sm ${
+                      asin.adjustedQuantity > 10 
+                        ? 'bg-green-600/80 text-green-100' 
+                        : asin.adjustedQuantity > 0 
+                          ? 'bg-yellow-600/80 text-yellow-100' 
+                          : 'bg-red-600/80 text-red-100'
+                    }`}>
+                      {asin.adjustedQuantity} units
+                    </div>
                   </div>
                 </div>
 
-                {/* Bundle Indicator */}
-                {asin.type === 'Bundle' && (
-                  <div className="mt-3 flex items-center justify-center">
-                    <div className="bg-purple-900/30 backdrop-blur-sm border border-purple-600/30 rounded-full px-2 py-1">
-                      <p className="text-purple-300 text-xs font-medium">
-                        Bundle • Pack of {asin.pack}
+                {/* Product Details */}
+                <div className="p-4">
+                  {/* Title and ASIN */}
+                  <div className="mb-3">
+                    <h3 className="text-white font-medium text-sm leading-tight mb-1 line-clamp-2">
+                      {asin.title || 'No title'}
+                    </h3>
+                    <a 
+                      href={`https://www.amazon.co.uk/dp/${asin.asin}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 text-xs font-mono transition-colors duration-300"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {asin.asin}
+                    </a>
+                  </div>
+
+                  {/* COG and Avg Profit */}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div>
+                      <p className="text-gray-400 text-xs">Average COG</p>
+                      <p className="text-white font-semibold">{formatCurrency(asin.averageBuyPrice)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-xs">Avg. Profit</p>
+                      <p className={`font-semibold ${averageProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(averageProfit)}
                       </p>
                     </div>
                   </div>
-                )}
 
-                {/* Low Stock Warning */}
-                {asin.adjustedQuantity <= 5 && asin.adjustedQuantity > 0 && (
-                  <div className="mt-3 bg-yellow-900/30 backdrop-blur-sm border border-yellow-600/30 rounded-lg p-2">
-                    <p className="text-yellow-300 text-xs text-center font-medium">
-                      ⚠️ Low Stock
-                    </p>
+                  {/* Stock Information */}
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-2">
+                      <p className="text-xs text-gray-400">Total</p>
+                      <p className="text-sm font-semibold text-white">{asin.adjustedQuantity}</p>
+                    </div>
+                    <div className="bg-blue-900/30 backdrop-blur-sm rounded-lg p-2">
+                      <p className="text-xs text-blue-400">Shipped</p>
+                      <p className="text-sm font-semibold text-blue-300">{asin.shipped}</p>
+                    </div>
+                    <div className="bg-green-900/30 backdrop-blur-sm rounded-lg p-2">
+                      <p className="text-xs text-green-400">Inv</p>
+                      <p className="text-sm font-semibold text-green-300">{asin.stored}</p>
+                    </div>
                   </div>
-                )}
 
-                {/* Out of Stock Warning */}
-                {asin.adjustedQuantity === 0 && (
-                  <div className="mt-3 bg-red-900/30 backdrop-blur-sm border border-red-600/30 rounded-lg p-2">
-                    <p className="text-red-300 text-xs text-center font-medium">
-                      🚫 Out of Stock
-                    </p>
-                  </div>
-                )}
-              </div>
-            </Card>
-          ))}
+                  {/* Bundle Indicator */}
+                  {asin.type === 'Bundle' && (
+                    <div className="mt-3 flex items-center justify-center">
+                      <div className="bg-purple-900/30 backdrop-blur-sm border border-purple-600/30 rounded-full px-2 py-1">
+                        <p className="text-purple-300 text-xs font-medium">
+                          Bundle • Pack of {asin.pack}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Low Stock Warning */}
+                  {asin.adjustedQuantity <= 5 && asin.adjustedQuantity > 0 && (
+                    <div className="mt-3 bg-yellow-900/30 backdrop-blur-sm border border-yellow-600/30 rounded-lg p-2">
+                      <p className="text-yellow-300 text-xs text-center font-medium">
+                        ⚠️ Low Stock
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Out of Stock Warning */}
+                  {asin.adjustedQuantity === 0 && (
+                    <div className="mt-3 bg-red-900/30 backdrop-blur-sm border border-red-600/30 rounded-lg p-2">
+                      <p className="text-red-300 text-xs text-center font-medium">
+                        🚫 Out of Stock
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 

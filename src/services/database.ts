@@ -10,7 +10,8 @@ import {
   AmazonTransaction,
   DashboardMetrics,
   SupplierMetrics,
-  Category
+  Category,
+  GeneralLedgerTransaction
 } from '../types/database';
 
 // Helper function to sanitize date values
@@ -62,6 +63,38 @@ const generateNextTransactionNumber = async (): Promise<string> => {
   return `ASH-${nextNumber.toString().padStart(5, '0')}`;
 };
 
+// Helper function to generate next general ledger transaction number
+const generateNextGeneralLedgerNumber = async (): Promise<string> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
+  // Get the latest transaction to find the highest number
+  const { data: latestTransaction, error } = await supabase
+    .from('general_ledger')
+    .select('reference')
+    .eq('user_id', user.id)
+    .like('reference', 'GL-%')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+
+  let nextNumber = 1;
+  
+  if (latestTransaction && latestTransaction.length > 0) {
+    const latestRef = latestTransaction[0].reference;
+    if (latestRef && latestRef.startsWith('GL-')) {
+      const numberPart = latestRef.substring(3); // Remove 'GL-' prefix
+      const currentNumber = parseInt(numberPart, 10);
+      if (!isNaN(currentNumber)) {
+        nextNumber = currentNumber + 1;
+      }
+    }
+  }
+
+  return `GL-${nextNumber.toString().padStart(5, '0')}`;
+};
+
 // Categories
 export const getCategories = async (): Promise<Category[]> => {
   const { data, error } = await supabase
@@ -71,6 +104,25 @@ export const getCategories = async (): Promise<Category[]> => {
   
   if (error) throw error;
   return data || [];
+};
+
+// Directors
+export const getUniqueDirectors = async (): Promise<string[]> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
+  const { data, error } = await supabase
+    .from('general_ledger')
+    .select('director_name')
+    .eq('user_id', user.id)
+    .not('director_name', 'is', null)
+    .neq('director_name', '');
+
+  if (error) throw error;
+
+  // Extract unique director names and sort alphabetically
+  const uniqueDirectors = [...new Set(data?.map(item => item.director_name).filter(Boolean) || [])];
+  return uniqueDirectors.sort();
 };
 
 // Suppliers
@@ -259,15 +311,12 @@ export const getTransactionsWithMetrics = async (): Promise<TransactionWithMetri
     const items = transactionItems.filter(item => item.transaction_id === transaction.id);
     
     // Calculate total cost including fees AND shipping
-    const itemsCost = items.reduce((sum, item) => sum + ((item.buy_price + (item.est_fees || 0)) * item.quantity), 0);
-    const totalCost = itemsCost + transaction.shipping_cost;
-    
-    // Calculate estimated profit
+    const itemsCostOfGoods = items.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
+    const totalFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalCost = itemsCostOfGoods + transaction.shipping_cost; // This is COG + Shipping
     const totalRevenue = items.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
-    const estimatedProfit = totalRevenue - totalCost;
-    
-    // Calculate ROI
-    const roi = totalCost > 0 ? (estimatedProfit / totalCost) * 100 : 0;
+    const estimatedProfit = totalRevenue - totalCost - totalFees; // Revenue - (COG + Shipping) - Fees
+    const roi = itemsCostOfGoods > 0 ? (estimatedProfit / itemsCostOfGoods) * 100 : 0; // ROI based on COG only
 
     return {
       ...transaction,
@@ -298,15 +347,12 @@ export const getTransactionsByASIN = async (asinCode: string): Promise<Transacti
     const items = transactionItems.filter(item => item.transaction_id === transaction.id);
     
     // Calculate total cost including fees AND shipping
-    const itemsCost = items.reduce((sum, item) => sum + ((item.buy_price + (item.est_fees || 0)) * item.quantity), 0);
-    const totalCost = itemsCost + transaction.shipping_cost;
-    
-    // Calculate estimated profit
+    const itemsCostOfGoods = items.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
+    const totalFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalCost = itemsCostOfGoods + transaction.shipping_cost; // This is COG + Shipping
     const totalRevenue = items.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
-    const estimatedProfit = totalRevenue - totalCost;
-    
-    // Calculate ROI
-    const roi = totalCost > 0 ? (estimatedProfit / totalCost) * 100 : 0;
+    const estimatedProfit = totalRevenue - totalCost - totalFees; // Revenue - (COG + Shipping) - Fees
+    const roi = itemsCostOfGoods > 0 ? (estimatedProfit / itemsCostOfGoods) * 100 : 0; // ROI based on COG only
 
     return {
       ...transaction,
@@ -372,6 +418,65 @@ export const updateTransaction = async (id: string, updates: Partial<Transaction
 export const deleteTransaction = async (id: string): Promise<void> => {
   const { error } = await supabase
     .from('transactions')
+    .delete()
+    .eq('id', id);
+  
+  if (error) throw error;
+};
+
+// General Ledger Transactions
+export const getGeneralLedgerTransactions = async (): Promise<GeneralLedgerTransaction[]> => {
+  const { data, error } = await supabase
+    .from('general_ledger')
+    .select('*')
+    .order('date', { ascending: false });
+  
+  if (error) throw error;
+  return data || [];
+};
+
+export const createGeneralLedgerTransaction = async (transaction: Omit<GeneralLedgerTransaction, 'id' | 'user_id' | 'created_at'>): Promise<GeneralLedgerTransaction> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
+  // Auto-generate reference if not provided or if it's not a Director's loan with custom reference
+  let transactionData = { ...transaction };
+  if (!transactionData.reference || 
+      (transactionData.reference.trim() === '' && transactionData.category !== 'Director\'s loans') ||
+      (!transactionData.reference.startsWith('Director\'s') && transactionData.category !== 'Director\'s loans')) {
+    transactionData.reference = await generateNextGeneralLedgerNumber();
+  }
+
+  // Set default payment method if not provided
+  if (!transactionData.payment_method || transactionData.payment_method.trim() === '') {
+    transactionData.payment_method = 'AMEX Plat';
+  }
+
+  const { data, error } = await supabase
+    .from('general_ledger')
+    .insert({ ...transactionData, user_id: user.id })
+    .select()
+    .single();
+  
+  if (error) throw error;
+  return data;
+};
+
+export const updateGeneralLedgerTransaction = async (id: string, updates: Partial<GeneralLedgerTransaction>): Promise<GeneralLedgerTransaction> => {
+  const { data, error } = await supabase
+    .from('general_ledger')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) throw error;
+  return data;
+};
+
+export const deleteGeneralLedgerTransaction = async (id: string): Promise<void> => {
+  const { error } = await supabase
+    .from('general_ledger')
     .delete()
     .eq('id', id);
   
@@ -556,19 +661,20 @@ export const deleteAllAmazonTransactions = async (): Promise<void> => {
 
 // Dashboard Metrics
 export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
-  const [transactions, transactionItems, currentBudget] = await Promise.all([
+  const [transactions, transactionItems, currentBudget, generalLedgerTransactions] = await Promise.all([
     getTransactions(),
     getTransactionItems(),
-    getCurrentBudget()
+    getCurrentBudget(),
+    getGeneralLedgerTransactions()
   ]);
 
-  // Calculate total orders
-  const totalOrders = transactions.length;
+  // Calculate total orders (now includes both purchase orders and general ledger transactions)
+  const totalOrders = transactions.length + generalLedgerTransactions.length;
 
   // Calculate total stock ordered
   const totalStockOrdered = transactionItems.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Calculate monthly spend (current month) - including shipping costs
+  // Calculate monthly spend (current month) - including shipping costs - ONLY from purchase orders
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
@@ -580,35 +686,34 @@ export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
   });
 
   const monthlySpend = monthlyTransactions.reduce((sum, transaction) => {
-    const transactionTotal = transactionItems
+    const transactionItemsCostOfGoods = transactionItems
       .filter(item => item.transaction_id === transaction.id)
-      .reduce((itemSum, item) => itemSum + ((item.buy_price + (item.est_fees || 0)) * item.quantity), 0);
-    return sum + transactionTotal + transaction.shipping_cost;
-  }, 0);
+      .reduce((itemSum, item) => itemSum + (item.buy_price * item.quantity), 0); // Only COG
+      return sum + transactionItemsCostOfGoods + transaction.shipping_cost;
+    }, 0);
 
   // Calculate total estimated profit and ROI - including shipping costs
-  const totalCost = transactions.reduce((sum, transaction) => {
-    const transactionTotal = transactionItems
-      .filter(item => item.transaction_id === transaction.id)
-      .reduce((itemSum, item) => itemSum + ((item.buy_price + (item.est_fees || 0)) * item.quantity), 0);
-    return sum + transactionTotal + transaction.shipping_cost;
-  }, 0);
-  
   const totalRevenue = transactionItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
-  const totalEstimatedProfit = totalRevenue - totalCost;
-  const averageROI = totalCost > 0 ? (totalEstimatedProfit / totalCost) * 100 : 0;
+  const totalCostOfGoods = transactionItems.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
+  const totalShippingCost = transactions.reduce((sum, transaction) => sum + transaction.shipping_cost, 0);
+  const totalFees = transactionItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+  const totalExpenses = totalCostOfGoods + totalShippingCost + totalFees; // Total expenses including COG, Shipping, and Fees
+  const totalEstimatedProfit = totalRevenue - totalExpenses; // Revenue - Total Expenses
+  const averageROI = totalCostOfGoods > 0 ? (totalEstimatedProfit / totalCostOfGoods) * 100 : 0; // ROI based on total COG
 
-  // Calculate budget remaining
+  // Calculate budget remaining - ONLY based on purchase orders
   const budgetAmount = currentBudget?.amount || 0;
   const budgetRemaining = budgetAmount - monthlySpend;
 
   // Calculate pending orders
   const pendingOrders = transactions.filter(t => 
-    t.status === 'ordered' || t.status === 'in transit' || t.status === 'collected' || t.status === 'partially received'
+    t.status === 'pending' || t.status === 'ordered'
   ).length;
 
   // Calculate on-time delivery rate
-  const deliveredTransactions = transactions.filter(t => t.status === 'fully received');
+  const deliveredTransactions = transactions.filter(t => 
+    t.status === 'fully received' || t.status === 'collected' || t.status === 'complete'
+  );
   const onTimeDeliveries = deliveredTransactions.filter(t => {
     if (!t.ordered_date || !t.delivery_date) return false;
     // Assume 7 days is the expected delivery time
@@ -643,27 +748,26 @@ export const getSupplierMetrics = async (): Promise<SupplierMetrics[]> => {
   return suppliers.map(supplier => {
     const supplierTransactions = transactions.filter(t => t.supplier_id === supplier.id);
     const orderCount = supplierTransactions.length;
-
-    // Calculate total spend for this supplier including fees AND shipping
-    const totalSpend = supplierTransactions.reduce((sum, transaction) => {
-      const transactionTotal = transactionItems
-        .filter(item => item.transaction_id === transaction.id)
-        .reduce((itemSum, item) => itemSum + ((item.buy_price + (item.est_fees || 0)) * item.quantity), 0);
-      return sum + transactionTotal + transaction.shipping_cost;
-    }, 0);
-
-    // Calculate estimated profit for this supplier including shipping costs
     const supplierItems = transactionItems.filter(item => 
       supplierTransactions.some(t => t.id === item.transaction_id)
     );
-    const itemsCost = supplierItems.reduce((sum, item) => sum + ((item.buy_price + (item.est_fees || 0)) * item.quantity), 0);
-    const shippingCost = supplierTransactions.reduce((sum, t) => sum + t.shipping_cost, 0);
-    const totalCost = itemsCost + shippingCost;
-    const totalRevenue = supplierItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
-    const estimatedProfit = totalRevenue - totalCost;
 
-    // Calculate ROI
-    const roi = totalCost > 0 ? (estimatedProfit / totalCost) * 100 : 0;
+    // Calculate total spend for this supplier including fees AND shipping
+    const totalSpend = supplierTransactions.reduce((sum, transaction) => {
+      const transactionItemsCostOfGoods = transactionItems
+        .filter(item => item.transaction_id === transaction.id)
+        .reduce((itemSum, item) => itemSum + (item.buy_price * item.quantity), 0); // Only COG
+      return sum + transactionItemsCostOfGoods + transaction.shipping_cost;
+    }, 0);
+
+    // Calculate estimated profit for this supplier including shipping costs
+    const supplierItemsCostOfGoods = supplierItems.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
+    const supplierShippingCost = supplierTransactions.reduce((sum, t) => sum + t.shipping_cost, 0);
+    const supplierFees = supplierItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const supplierTotalExpenses = supplierItemsCostOfGoods + supplierShippingCost + supplierFees;
+    const totalRevenue = supplierItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
+    const estimatedProfit = totalRevenue - supplierTotalExpenses;
+    const roi = supplierItemsCostOfGoods > 0 ? (estimatedProfit / supplierItemsCostOfGoods) * 100 : 0;
 
     // Calculate average order value
     const averageOrderValue = orderCount > 0 ? totalSpend / orderCount : 0;

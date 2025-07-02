@@ -8,6 +8,7 @@ import { updateASIN, deleteASIN, getTransactionsByASIN, createASIN } from '../se
 import { formatCurrency, truncateText, formatDate } from '../utils/formatters';
 import { TransactionWithMetrics } from '../types/database';
 import { downloadCSVTemplate, parseASINCSV } from '../utils/csvHelpers';
+import { downloadASINExport } from '../utils/asinHelpers';
 
 const ASINs: React.FC = () => {
   const { asins, loading, error, refetch } = useASINsWithMetrics();
@@ -30,6 +31,9 @@ const ASINs: React.FC = () => {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Filter states
+  const [showIncompleteOnly, setShowIncompleteOnly] = useState(false);
 
   const handleEdit = (asin: any) => {
     setEditingId(asin.id);
@@ -187,24 +191,38 @@ const ASINs: React.FC = () => {
     }
   };
 
-  // Helper function to format title into 2 lines, 24 chars each
+  // Export functionality
+  const handleExportClick = () => {
+    downloadASINExport(asins);
+  };
+
+  // Filter ASINs based on incomplete filter
+  const filteredAsins = showIncompleteOnly 
+    ? asins.filter(asin => 
+        asin.category === 'Stock' && 
+        (!asin.title || asin.title.trim() === '' || asin.title === 'No title' || 
+         !asin.image_url || asin.image_url.trim() === '' || asin.image_url === 'No image')
+      )
+    : asins;
+
+  // Helper function to format title into 2 lines, 64 chars each
   const formatTitleTwoLines = (title: string | null): { line1: string; line2: string } => {
     if (!title || title === 'No title') {
       return { line1: 'No title', line2: '' };
     }
     
-    const truncated = truncateText(title, 48);
-    if (truncated.length <= 24) {
+    const truncated = truncateText(title, 128);
+    if (truncated.length <= 64) {
       return { line1: truncated, line2: '' };
     }
     
-    // Find a good break point around 24 characters
-    let breakPoint = 24;
+    // Find a good break point around 64 characters
+    let breakPoint = 64;
     while (breakPoint > 0 && truncated[breakPoint] !== ' ') {
       breakPoint--;
     }
     
-    if (breakPoint === 0) breakPoint = 24; // If no space found, break at 24
+    if (breakPoint === 0) breakPoint = 64; // If no space found, break at 64
     
     const line1 = truncated.substring(0, breakPoint).trim();
     const line2 = truncated.substring(breakPoint).trim();
@@ -221,7 +239,14 @@ const ASINs: React.FC = () => {
             <p className="text-gray-400 mt-1">Manage your Amazon product ASINs and track performance</p>
           </div>
           <div className="flex items-center space-x-3">
-            <button className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
+            <button 
+              onClick={() => setShowIncompleteOnly(!showIncompleteOnly)}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                showIncompleteOnly 
+                  ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                  : 'bg-gray-700 hover:bg-gray-600 text-white'
+              }`}
+            >
               Incomplete
             </button>
             <button 
@@ -230,6 +255,13 @@ const ASINs: React.FC = () => {
             >
               <Download className="h-4 w-4" />
               <span>Template</span>
+            </button>
+            <button 
+              onClick={handleExportClick}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center space-x-2"
+            >
+              <Download className="h-4 w-4" />
+              <span>Export</span>
             </button>
             <button 
               onClick={handleImportClick}
@@ -268,7 +300,14 @@ const ASINs: React.FC = () => {
             <p className="text-gray-400 mt-1">Manage your Amazon product ASINs and track performance</p>
           </div>
           <div className="flex items-center space-x-3">
-            <button className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
+            <button 
+              onClick={() => setShowIncompleteOnly(!showIncompleteOnly)}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                showIncompleteOnly 
+                  ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                  : 'bg-gray-700 hover:bg-gray-600 text-white'
+              }`}
+            >
               Incomplete
             </button>
             <button 
@@ -277,6 +316,13 @@ const ASINs: React.FC = () => {
             >
               <Download className="h-4 w-4" />
               <span>Template</span>
+            </button>
+            <button 
+              onClick={handleExportClick}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center space-x-2"
+            >
+              <Download className="h-4 w-4" />
+              <span>Export</span>
             </button>
             <button 
               onClick={handleImportClick}
@@ -317,7 +363,14 @@ const ASINs: React.FC = () => {
           <p className="text-gray-400 mt-1">Manage your Amazon product ASINs and track performance</p>
         </div>
         <div className="flex items-center space-x-3">
-          <button className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
+          <button 
+            onClick={() => setShowIncompleteOnly(!showIncompleteOnly)}
+            className={`px-4 py-2 rounded-lg transition-colors ${
+              showIncompleteOnly 
+                ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                : 'bg-gray-700 hover:bg-gray-600 text-white'
+            }`}
+          >
             Incomplete
           </button>
           <button 
@@ -326,6 +379,13 @@ const ASINs: React.FC = () => {
           >
             <Download className="h-4 w-4" />
             <span>Template</span>
+          </button>
+          <button 
+            onClick={handleExportClick}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center space-x-2"
+          >
+            <Download className="h-4 w-4" />
+            <span>Export</span>
           </button>
           <button 
             onClick={handleImportClick}
@@ -383,6 +443,29 @@ const ASINs: React.FC = () => {
         </Card>
       )}
 
+      {/* Filter Status */}
+      {showIncompleteOnly && (
+        <Card className="p-4 bg-orange-900/20 border-orange-600/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <AlertCircle className="h-5 w-5 text-orange-400" />
+              <div>
+                <h3 className="text-orange-300 font-medium">Showing Incomplete Stock ASINs</h3>
+                <p className="text-orange-400 text-sm">
+                  Displaying {filteredAsins.length} ASINs missing title or image URL
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowIncompleteOnly(false)}
+              className="text-orange-400 hover:text-orange-300 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </Card>
+      )}
+
       {/* ASINs Table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -393,7 +476,7 @@ const ASINs: React.FC = () => {
                   {/* Empty header for image column */}
                 </th>
                 <th className="px-3 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Category - ASIN - Brand
+                  ASIN
                 </th>
                 <th className="px-3 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Title
@@ -425,17 +508,26 @@ const ASINs: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-gray-800 divide-y divide-gray-700">
-              {asins.length === 0 ? (
+              {filteredAsins.length === 0 ? (
                 <tr>
                   <td colSpan={11} className="px-6 py-12 text-center">
                     <div className="text-gray-400">
-                      <p className="text-lg mb-2">No ASINs found</p>
-                      <p className="text-sm">Add your first ASIN to start tracking product performance</p>
+                      {showIncompleteOnly ? (
+                        <>
+                          <p className="text-lg mb-2">No incomplete ASINs found</p>
+                          <p className="text-sm">All your Stock ASINs have complete title and image information</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-lg mb-2">No ASINs found</p>
+                          <p className="text-sm">Add your first ASIN to start tracking product performance</p>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
               ) : (
-                asins.map((asin) => {
+                filteredAsins.map((asin) => {
                   const titleLines = formatTitleTwoLines(asin.title);
                   
                   return (
@@ -481,10 +573,10 @@ const ASINs: React.FC = () => {
                           <button
                             onClick={() => handleEditASIN(asin)}
                             className="hover:text-blue-300 transition-colors text-left"
-                            title={`[${asin.category}] - [${asin.asin}] - [${asin.brand || 'No Brand'}]`}
+                            title={`${asin.asin}`}
                           >
                             <div className="text-blue-400 text-xs">
-                              [{asin.category || 'Stock'}] - [{truncateText(asin.asin, 11)}] - [{truncateText(asin.brand || 'No Brand', 15)}]
+                              {`${asin.asin}`}
                             </div>
                           </button>
                         )}
@@ -736,7 +828,7 @@ const ASINs: React.FC = () => {
               </p>
               <p className="text-gray-300">
                 {asins.find(a => a.id === showDeleteModal)?.title ? 
-                  truncateText(asins.find(a => a.id === showDeleteModal)!.title!, 32) : 
+                  truncateText(asins.find(a => a.id === showDeleteModal)!.title!, 48) : 
                   'No title'
                 }
               </p>

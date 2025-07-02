@@ -33,7 +33,10 @@ const ASINModal: React.FC<ASINModalProps> = ({
     totalUnits: 0,
     adjustedQuantity: 0,
     shipped: 0,
-    stored: 0
+    stored: 0,
+    averageFee: 0,
+    averageSellPrice: 0,
+    averageProfit: 0
   });
 
   useEffect(() => {
@@ -63,7 +66,10 @@ const ASINModal: React.FC<ASINModalProps> = ({
         totalUnits: 0,
         adjustedQuantity: 0,
         shipped: 0,
-        stored: 0
+        stored: 0,
+        averageFee: 0,
+        averageSellPrice: 0,
+        averageProfit: 0
       });
     }
     setError(null);
@@ -76,7 +82,14 @@ const ASINModal: React.FC<ASINModalProps> = ({
       
       const totalCost = asinItems.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
       const totalQuantity = asinItems.reduce((sum, item) => sum + item.quantity, 0);
+      const totalFees = asinItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+      const totalRevenue = asinItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
+      
       const averageCOG = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+      const averageFee = totalQuantity > 0 ? totalFees / totalQuantity : 0;
+      const averageSellPrice = totalQuantity > 0 ? totalRevenue / totalQuantity : 0;
+      const averageProfit = averageSellPrice - averageCOG - averageFee;
+      
       const adjustedQuantity = formData.pack > 1 ? Math.floor(totalQuantity / formData.pack) : totalQuantity;
       const shipped = asin?.shipped || 0;
       const stored = adjustedQuantity - shipped;
@@ -86,7 +99,10 @@ const ASINModal: React.FC<ASINModalProps> = ({
         totalUnits: totalQuantity,
         adjustedQuantity,
         shipped,
-        stored
+        stored,
+        averageFee,
+        averageSellPrice,
+        averageProfit
       });
     } catch (err) {
       console.error('Failed to load metrics:', err);
@@ -406,7 +422,7 @@ const ASINModal: React.FC<ASINModalProps> = ({
 
               {/* Right Column */}
               <div className="space-y-6">
-                {/* Summary - Aligned with Product Information */}
+                {/* Summary - Enhanced with new metrics */}
                 <div className="bg-gray-800/50 backdrop-blur-sm border border-gray-600/30 rounded-xl p-6">
                   <div className="text-center mb-4">
                     <h3 className="text-lg font-semibold text-white">Summary</h3>
@@ -415,7 +431,7 @@ const ASINModal: React.FC<ASINModalProps> = ({
                   {/* Row 1: Average COG | Total Units */}
                   <div className="grid grid-cols-2 gap-6 mb-4">
                     <div className="text-center bg-green-600/20 border border-green-600/30 rounded-xl p-2">
-                      <p className="text-3xl font-bold text-green-400 mb-1 ">{formatCurrency(metrics.averageCOG)}</p>
+                      <p className="text-3xl font-bold text-green-400 mb-1">{formatCurrency(metrics.averageCOG)}</p>
                       <p className="text-green-400 text-sm">Average COG</p>
                     </div>
                     <div className="text-center bg-gray-600/30 border border-gray-600/40 rounded-xl p-2">
@@ -423,8 +439,36 @@ const ASINModal: React.FC<ASINModalProps> = ({
                       <p className="text-white text-sm">Total Units</p>
                     </div>
                   </div>
+
+                  {/* Row 2: New metrics */}
+                  <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className="text-center bg-red-600/20 border border-red-600/30 rounded-xl p-2">
+                      <p className="text-2xl font-bold text-red-400">{formatCurrency(metrics.averageFee)}</p>
+                      <p className="text-red-400 text-sm">Avg. Fee</p>
+                    </div>
+                    <div className="text-center bg-blue-600/20 border border-blue-600/30 rounded-xl p-2">
+                      <p className="text-2xl font-bold text-blue-400">{formatCurrency(metrics.averageSellPrice)}</p>
+                      <p className="text-blue-400 text-sm">Avg. Sell Price</p>
+                    </div>
+                    <div className={`text-center border rounded-xl p-2 ${
+                      metrics.averageProfit >= 0 
+                        ? 'bg-green-600/20 border-green-600/30' 
+                        : 'bg-red-600/20 border-red-600/30'
+                    }`}>
+                      <p className={`text-2xl font-bold ${
+                        metrics.averageProfit >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {formatCurrency(metrics.averageProfit)}
+                      </p>
+                      <p className={`text-sm ${
+                        metrics.averageProfit >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        Avg. Profit
+                      </p>
+                    </div>
+                  </div>
                   
-                  {/* Row 2: Inv | Shipped | Pack Size */}
+                  {/* Row 3: Inv | Shipped | Pack Size */}
                   <div className="grid grid-cols-3 gap-4">
                     <div className="text-center bg-orange-600/20 border border-orange-600/30 rounded-xl p-2 mb-1">
                       <p className="text-2xl font-bold text-orange-400">{metrics.stored}</p>
@@ -435,7 +479,7 @@ const ASINModal: React.FC<ASINModalProps> = ({
                       <p className="text-purple-400 text-sm">Shipped</p>
                     </div>
                     <div className="text-center bg-blue-600/20 border border-blue-600/30 rounded-xl p-2 mb-1">
-                      <p className="text-2xl font-bold text-blue-400 ">{formData.pack}</p>
+                      <p className="text-2xl font-bold text-blue-400">{formData.pack}</p>
                       <p className="text-blue-400 text-sm">Pack Size</p>
                     </div>
                   </div>

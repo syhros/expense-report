@@ -140,11 +140,11 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
         });
       }
 
-      // Calculate total cost including fees
-      const totalCost = (formData.buy_price + formData.est_fees) * formData.quantity;
+      // Calculate total cost and profit
+      const itemCost = formData.buy_price * formData.quantity;
       const totalRevenue = formData.sell_price * formData.quantity;
-      const estimatedProfit = totalRevenue - totalCost;
-      const roi = totalCost > 0 ? (estimatedProfit / totalCost) * 100 : 0;
+      const estimatedProfit = totalRevenue - itemCost - (formData.est_fees * formData.quantity);
+      const roi = itemCost > 0 ? (estimatedProfit / itemCost) * 100 : 0;
 
       // Calculate display quantity (adjusted for bundles)
       const displayQuantity = finalAsinDetails?.type === 'Bundle' && finalAsinDetails.pack > 1 
@@ -158,7 +158,7 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
         sell_price: formData.sell_price,
         est_fees: formData.est_fees,
         asin_details: finalAsinDetails,
-        totalCost,
+        totalCost: itemCost,
         estimatedProfit,
         roi,
         displayQuantity

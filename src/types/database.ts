@@ -81,6 +81,20 @@ export interface AmazonTransaction {
   created_at: string;
 }
 
+export interface GeneralLedgerTransaction {
+  id: string;
+  date: string;
+  category: string;
+  reference: string;
+  type: string;
+  amount: number;
+  payment_method: string;
+  status: string;
+  director_name?: string;
+  user_id: string;
+  created_at: string;
+}
+
 export interface Category {
   id: string;
   name: string;

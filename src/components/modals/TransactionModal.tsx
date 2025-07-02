@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Calendar, Building2, CreditCard, Package, Upload, FileText, ChevronLeft, ChevronRight, ZoomIn, Loader2, Edit, ChevronDown } from 'lucide-react';
-import { createTransaction, updateTransaction, getSuppliers, createTransactionItem, updateTransactionItem, deleteTransactionItem, getTransactionItems } from '../../services/database';
+import { X, Plus, Trash2, Calendar, Building2, CreditCard, Package, Upload, FileText, ChevronLeft, ChevronRight, ZoomIn, Loader2, Edit, ChevronDown, User } from 'lucide-react';
+import { createTransaction, updateTransaction, getSuppliers, createTransactionItem, updateTransactionItem, deleteTransactionItem, getTransactionItems, createGeneralLedgerTransaction } from '../../services/database';
 import { uploadReceipt, getReceiptUrl, deleteReceipt, listReceipts } from '../../services/storage';
-import { useSuppliers, useCategories } from '../../hooks/useData';
+import { useSuppliers, useCategories, useUniqueDirectors } from '../../hooks/useData';
 import TransactionItemModal from './TransactionItemModal';
 import { Transaction, TransactionItemDisplay, ASIN } from '../../types/database';
 import { formatCurrency } from '../../utils/formatters';
@@ -30,7 +30,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
   transaction 
 }) => {
   const { suppliers } = useSuppliers();
-  const { categories } = useCategories();
+  const { directors } = useUniqueDirectors();
   const [formData, setFormData] = useState({
     ordered_date: '',
     delivery_date: '',
@@ -38,7 +38,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
     po_number: '',
     category: 'Stock',
     payment_method: 'AMEX Plat',
-    status: 'ordered',
+    status: 'pending',
     shipping_cost: 0,
     notes: ''
   });
@@ -53,11 +53,10 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
   const [currentReceiptIndex, setCurrentReceiptIndex] = useState(0);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [selectedDirectorsLoan, setSelectedDirectorsLoan] = useState<string>('No');
 
-  // Category dropdown states
-  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
-  const [categorySearch, setCategorySearch] = useState('');
-  const [filteredCategories, setFilteredCategories] = useState(categories);
+  // Simplified categories for purchase orders
+  const purchaseOrderCategories = ['Stock', 'Operational Equipment', 'Office Supplies', 'Vehicle Maintenance', 'Misc.'];
 
   useEffect(() => {
     if (transaction) {
@@ -68,7 +67,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
         po_number: transaction.po_number || '',
         category: transaction.category || 'Stock',
         payment_method: transaction.payment_method || 'AMEX Plat',
-        status: transaction.status || 'ordered',
+        status: transaction.status || 'pending',
         shipping_cost: transaction.shipping_cost || 0,
         notes: transaction.notes || ''
       });
@@ -80,18 +79,6 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
     setError(null);
   }, [transaction, isOpen]);
 
-  // Filter categories based on search
-  useEffect(() => {
-    if (categorySearch) {
-      const filtered = categories.filter(category => 
-        category.name.toLowerCase().includes(categorySearch.toLowerCase())
-      );
-      setFilteredCategories(filtered);
-    } else {
-      setFilteredCategories(categories);
-    }
-  }, [categorySearch, categories]);
-
   const resetForm = () => {
     setFormData({
       ordered_date: '',
@@ -100,7 +87,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
       po_number: '',
       category: 'Stock',
       payment_method: 'AMEX Plat',
-      status: 'ordered',
+      status: 'pending',
       shipping_cost: 0,
       notes: ''
     });
@@ -108,7 +95,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
     setOriginalItems([]);
     setReceipts([]);
     setCurrentReceiptIndex(0);
-    setCategorySearch('');
+    setSelectedDirectorsLoan('No');
   };
 
   const loadTransactionItems = async (transactionId: string) => {
@@ -121,9 +108,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
         return {
           ...item,
           asin_details: asinDetails,
-          totalCost: (item.buy_price + (item.est_fees || 0)) * item.quantity,
-          estimatedProfit: (item.sell_price * item.quantity) - ((item.buy_price + (item.est_fees || 0)) * item.quantity),
-          roi: ((item.sell_price * item.quantity) - ((item.buy_price + (item.est_fees || 0)) * item.quantity)) / ((item.buy_price + (item.est_fees || 0)) * item.quantity) * 100,
+          totalCost: item.buy_price * item.quantity, // This is the item's COG
+          estimatedProfit: (item.sell_price * item.quantity) - (item.buy_price * item.quantity) - (item.est_fees * item.quantity),
+          roi: (item.buy_price * item.quantity) > 0 ? ((item.sell_price * item.quantity) - (item.buy_price * item.quantity) - (item.est_fees * item.quantity)) / (item.buy_price * item.quantity) * 100 : 0,
           displayQuantity: asinDetails?.type === 'Bundle' && asinDetails.pack > 1 
             ? Math.floor(item.quantity / asinDetails.pack) 
             : item.quantity
@@ -280,6 +267,18 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Confirmation for Director's Loan
+    if (selectedDirectorsLoan !== 'No') {
+      const totalCost = items.reduce((sum, item) => sum + item.totalCost, 0) + formData.shipping_cost;
+      const confirmed = window.confirm(
+        `Are you sure you want to allocate this purchase order (${formatCurrency(totalCost)}) as a Director's Loan from ${selectedDirectorsLoan}?`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+    
     setLoading(true);
     setError(null);
 
@@ -353,6 +352,23 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
         }
       }
 
+      // Create Director's Loan entry if selected
+      if (selectedDirectorsLoan !== 'No') {
+        const totalCost = items.reduce((sum, item) => sum + item.totalCost, 0) + formData.shipping_cost;
+        const reference = `Director's Loan Received from ${selectedDirectorsLoan} for PO ${savedTransaction.po_number || savedTransaction.id.slice(0, 8).toUpperCase()}`;
+        
+        await createGeneralLedgerTransaction({
+          date: formData.ordered_date || new Date().toISOString().split('T')[0],
+          category: 'Director\'s loans',
+          type: 'Loan Received',
+          amount: totalCost, // Positive amount for loan received
+          payment_method: 'Tide',
+          director_name: selectedDirectorsLoan,
+          reference: reference,
+          status: 'pending'
+        });
+      }
+
       onSuccess();
       onClose();
     } catch (err) {
@@ -368,18 +384,6 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
       ...prev, 
       [name]: name === 'shipping_cost' ? parseFloat(value) || 0 : value 
     }));
-  };
-
-  const handleCategorySelect = (categoryName: string) => {
-    setFormData(prev => ({ ...prev, category: categoryName }));
-    setCategorySearch(categoryName);
-    setShowCategoryDropdown(false);
-  };
-
-  const handleCategoryInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setCategorySearch(value);
-    setFormData(prev => ({ ...prev, category: value }));
   };
 
   const handleAddItem = () => {
@@ -431,9 +435,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-white">
-                  {transaction ? 'Edit Transaction' : 'Add Transaction'}
+                  {transaction ? 'Edit Purchase Order' : 'Add Purchase Order'}
                 </h2>
-                <p className="text-sm text-gray-400">{formData.po_number || 'New Transaction'}</p>
+                <p className="text-sm text-gray-400">{formData.po_number || 'New Purchase Order'}</p>
               </div>
             </div>
             <button
@@ -509,11 +513,12 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                     onChange={handleChange}
                     className="w-full px-4 py-4 bg-transparent text-white focus:outline-none appearance-none"
                   >
+                    <option value="pending" className="bg-gray-800 text-white">Pending</option>
                     <option value="ordered" className="bg-gray-800 text-white">Ordered</option>
-                    <option value="in transit" className="bg-gray-800 text-white">In Transit</option>
-                    <option value="collected" className="bg-gray-800 text-white">Collected</option>
-                    <option value="partially received" className="bg-gray-800 text-white">Partially Received</option>
+                    <option value="partially delivered" className="bg-gray-800 text-white">Partially Delivered</option>
                     <option value="fully received" className="bg-gray-800 text-white">Fully Received</option>
+                    <option value="collected" className="bg-gray-800 text-white">Collected</option>
+                    <option value="complete" className="bg-gray-800 text-white">Complete</option>
                   </select>
                   <label
                     htmlFor="status"
@@ -552,8 +557,8 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
               </div>
             </div>
 
-            {/* Row 2: Supplier, Category (Searchable), PO Number, Shipping Cost */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            {/* Row 2: Supplier, Category, PO Number, Shipping Cost, Directors Loan */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
               <div className="relative">
                 <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
@@ -582,25 +587,24 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                 </div>
               </div>
 
-              {/* Category Field with Searchable Dropdown */}
               <div className="relative">
                 <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
                     <FileText className="h-5 w-5 text-blue-400" />
                   </div>
-                  <input
-                    type="text"
+                  <select
                     id="category"
                     name="category"
-                    value={categorySearch || formData.category}
-                    onChange={handleCategoryInputChange}
-                    onFocus={() => setShowCategoryDropdown(true)}
-                    className="w-full pl-12 pr-10 py-4 bg-transparent text-white placeholder-transparent focus:outline-none"
-                    placeholder="Category"
-                  />
-                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <ChevronDown className="h-5 w-5 text-blue-400" />
-                  </div>
+                    value={formData.category}
+                    onChange={handleChange}
+                    className="w-full pl-12 pr-4 py-4 bg-transparent text-white focus:outline-none appearance-none"
+                  >
+                    {purchaseOrderCategories.map(category => (
+                      <option key={category} value={category} className="bg-gray-800 text-white">
+                        {category}
+                      </option>
+                    ))}
+                  </select>
                   <label
                     htmlFor="category"
                     className="absolute left-10 -top-2.5 bg-gray-800 px-2 text-sm font-medium text-blue-400"
@@ -608,25 +612,6 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                     Category
                   </label>
                 </div>
-                
-                {/* Category Dropdown */}
-                {showCategoryDropdown && filteredCategories.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800/90 backdrop-blur-xl border border-gray-600/30 rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto">
-                    {filteredCategories.map((category) => (
-                      <button
-                        key={category.id}
-                        type="button"
-                        onClick={() => handleCategorySelect(category.name)}
-                        className="w-full text-left px-4 py-3 hover:bg-white/10 transition-colors border-b border-gray-700/50 last:border-b-0"
-                      >
-                        <div className="text-white font-medium text-sm">{category.name}</div>
-                        {category.description && (
-                          <div className="text-gray-400 text-xs">{category.description}</div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
 
               <div className="relative">
@@ -676,12 +661,41 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                   </label>
                 </div>
               </div>
+
+              {/* Directors Loan Dropdown */}
+              <div className="relative">
+                <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
+                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                    <User className="h-5 w-5 text-blue-400" />
+                  </div>
+                  <select
+                    id="directors_loan"
+                    name="directors_loan"
+                    value={selectedDirectorsLoan}
+                    onChange={(e) => setSelectedDirectorsLoan(e.target.value)}
+                    className="w-full pl-12 pr-4 py-4 bg-transparent text-white focus:outline-none appearance-none"
+                  >
+                    <option value="No" className="bg-gray-800 text-white">No</option>
+                    {directors.map(director => (
+                      <option key={director} value={director} className="bg-gray-800 text-white">
+                        {director}
+                      </option>
+                    ))}
+                  </select>
+                  <label
+                    htmlFor="directors_loan"
+                    className="absolute left-10 -top-2.5 bg-gray-800 px-2 text-sm font-medium text-blue-400"
+                  >
+                    Directors Loan
+                  </label>
+                </div>
+              </div>
             </div>
 
             {/* Section Divider */}
             <div className="border-t border-gray-700/50 my-6"></div>
 
-            {/* Line Items Section */}
+            {/* Line Items Section - Always show for purchase orders */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Line Items</h3>
@@ -796,9 +810,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
               )}
             </div>
 
-            {/* Transaction Summary */}
+            {/* Transaction Summary - Always show for purchase orders */}
             <div className="mb-3">
-              <h3 className="text-lg font-semibold text-white mb-4">Transaction Summary</h3>
+              <h3 className="text-lg font-semibold text-white mb-4">Purchase Order Summary</h3>
               <div className="grid grid-cols-4 gap-4">
                 <div className="bg-blue-900/30 backdrop-blur-sm border border-blue-600/30 rounded-xl p-4 text-center">
                   <p className="text-2xl font-bold text-white">{totalItems}</p>
@@ -827,61 +841,81 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
             <div className="mb-6">
               <h3 className="text-lg font-semibold text-white mb-4">Receipt Upload</h3>
               
-              {/* Upload Area */}
-              <div className="mb-4">
-                <label className="block">
-                  <div className="border-2 border-dashed border-gray-600/50 rounded-xl p-6 text-center cursor-pointer hover:border-blue-500/50 transition-colors duration-300 bg-gray-800/30 backdrop-blur-sm">
+              {/* Upload Container with improved layout */}
+              <div className="border-2 border-dashed border-gray-600/50 rounded-xl bg-gray-800/30 backdrop-blur-sm">
+                {receipts.length > 0 ? (
+                  <div className="p-6">
+                    {/* Receipt Thumbnails */}
+                    <div className="space-y-4 mb-6">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-sm">{receipts.length} receipt(s)</span>
+                        {receipts.length > 5 && (
+                          <div className="flex items-center space-x-2">
+                            <button
+                              type="button"
+                              onClick={() => setCurrentReceiptIndex(Math.max(0, currentReceiptIndex - 1))}
+                              disabled={currentReceiptIndex === 0}
+                              className="p-2 bg-gray-700/50 backdrop-blur-sm rounded-lg text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <span className="text-gray-400 text-sm">
+                              {Math.floor(currentReceiptIndex / 5) + 1} of {Math.ceil(receipts.length / 5)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setCurrentReceiptIndex(Math.min(receipts.length - 5, currentReceiptIndex + 5))}
+                              disabled={currentReceiptIndex + 5 >= receipts.length}
+                              className="p-2 bg-gray-700/50 backdrop-blur-sm rounded-lg text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="flex space-x-4 overflow-x-auto pb-2">
+                        {receipts.slice(currentReceiptIndex, currentReceiptIndex + 5).map((receipt, index) => 
+                          renderReceiptThumbnail(receipt, currentReceiptIndex + index)
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Upload Button at Bottom */}
+                    <label className="block">
+                      <button
+                        type="button"
+                        className="w-full bg-blue-600/80 backdrop-blur-sm hover:bg-blue-700 text-white px-4 py-3 rounded-xl transition-all duration-300 hover:scale-102 flex items-center justify-center space-x-2"
+                        onClick={() => document.getElementById('receipt-upload')?.click()}
+                      >
+                        <Upload className="h-5 w-5" />
+                        <span>Click here to upload</span>
+                      </button>
+                      <input
+                        id="receipt-upload"
+                        type="file"
+                        multiple
+                        accept=".jpg,.jpeg,.png,.pdf"
+                        onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="block p-6 text-center cursor-pointer hover:border-blue-500/50 transition-colors duration-300">
                     <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
                     <p className="text-gray-300 mb-1">Click to upload receipts</p>
                     <p className="text-gray-500 text-sm">JPG, PNG, PDF up to 10MB</p>
-                  </div>
-                  <input
-                    type="file"
-                    multiple
-                    accept=".jpg,.jpeg,.png,.pdf"
-                    onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
-                    className="hidden"
-                  />
-                </label>
+                    <input
+                      type="file"
+                      multiple
+                      accept=".jpg,.jpeg,.png,.pdf"
+                      onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
-
-              {/* Receipt Thumbnails - Scrollable if more than 5 */}
-              {receipts.length > 0 && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400 text-sm">{receipts.length} receipt(s)</span>
-                    {receipts.length > 5 && (
-                      <div className="flex items-center space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => setCurrentReceiptIndex(Math.max(0, currentReceiptIndex - 1))}
-                          disabled={currentReceiptIndex === 0}
-                          className="p-2 bg-gray-700/50 backdrop-blur-sm rounded-lg text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <span className="text-gray-400 text-sm">
-                          {Math.floor(currentReceiptIndex / 5) + 1} of {Math.ceil(receipts.length / 5)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setCurrentReceiptIndex(Math.min(receipts.length - 5, currentReceiptIndex + 5))}
-                          disabled={currentReceiptIndex + 5 >= receipts.length}
-                          className="p-2 bg-gray-700/50 backdrop-blur-sm rounded-lg text-gray-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="flex space-x-4 overflow-x-auto pb-2">
-                    {receipts.slice(currentReceiptIndex, currentReceiptIndex + 5).map((receipt, index) => 
-                      renderReceiptThumbnail(receipt, currentReceiptIndex + index)
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Notes Section */}
@@ -924,7 +958,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <span>{transaction ? 'Update' : 'Create'} Transaction</span>
+                  <span>{transaction ? 'Update' : 'Create'} Purchase Order</span>
                 )}
               </button>
             </div>
@@ -966,14 +1000,6 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
         onSuccess={handleItemSuccess}
         item={editingItem}
       />
-
-      {/* Click outside to close category dropdown */}
-      {showCategoryDropdown && (
-        <div 
-          className="fixed inset-0 z-0" 
-          onClick={() => setShowCategoryDropdown(false)}
-        />
-      )}
     </>
   );
 };

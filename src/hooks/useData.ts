@@ -10,7 +10,9 @@ import {
   getDashboardMetrics,
   getSupplierMetrics,
   getCurrentBudget,
-  getCategories
+  getCategories,
+  getGeneralLedgerTransactions,
+  getUniqueDirectors
 } from '../services/database';
 import { 
   Supplier, 
@@ -22,7 +24,8 @@ import {
   AmazonTransaction,
   DashboardMetrics,
   SupplierMetrics,
-  Category
+  Category,
+  GeneralLedgerTransaction
 } from '../types/database';
 
 export const useSuppliers = () => {
@@ -138,6 +141,31 @@ export const useTransactionsWithMetrics = () => {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch transactions with metrics');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTransactions();
+  }, []);
+
+  return { transactions, loading, error, refetch: fetchTransactions };
+};
+
+export const useGeneralLedgerTransactions = () => {
+  const [transactions, setTransactions] = useState<GeneralLedgerTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchTransactions = async () => {
+    try {
+      setLoading(true);
+      const data = await getGeneralLedgerTransactions();
+      setTransactions(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch general ledger transactions');
     } finally {
       setLoading(false);
     }
@@ -278,4 +306,29 @@ export const useCategories = () => {
   }, []);
 
   return { categories, loading, error, refetch: fetchCategories };
+};
+
+export const useUniqueDirectors = () => {
+  const [directors, setDirectors] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDirectors = async () => {
+    try {
+      setLoading(true);
+      const data = await getUniqueDirectors();
+      setDirectors(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch directors');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDirectors();
+  }, []);
+
+  return { directors, loading, error, refetch: fetchDirectors };
 };

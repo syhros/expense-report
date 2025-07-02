@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import Card from '../shared/Card';
 
-interface Order {
+interface Transaction {
   id: string;
   supplier: string;
   status: string;
@@ -10,20 +10,24 @@ interface Order {
   transactionId?: string;
 }
 
-interface RecentOrdersProps {
-  orders: Order[];
+interface RecentTransactionsProps {
+  transactions: Transaction[];
 }
 
-const RecentOrders: React.FC<RecentOrdersProps> = ({ orders }) => {
+const RecentTransactions: React.FC<RecentTransactionsProps> = ({ transactions }) => {
   const getStatusColor = (status: string) => {
+    const isFinalized = ['fully received', 'collected', 'complete'].includes(status.toLowerCase());
+    
+    if (isFinalized) {
+      return 'bg-green-900 text-green-300';
+    }
+    
     switch (status.toLowerCase()) {
-      case 'delivered':
-      case 'fully received':
-      case 'collected':
-        return 'bg-green-900 text-green-300';
-      case 'in transit':
+      case 'ordered':
         return 'bg-blue-900 text-blue-300';
-      case 'processing':
+      case 'partially delivered':
+        return 'bg-orange-900 text-orange-300';
+      case 'pending':
         return 'bg-yellow-900 text-yellow-300';
       default:
         return 'bg-gray-700 text-gray-300';
@@ -33,33 +37,33 @@ const RecentOrders: React.FC<RecentOrdersProps> = ({ orders }) => {
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-white">Recent Orders</h3>
+        <h3 className="text-lg font-semibold text-white">Recent Transactions</h3>
       </div>
       
       <div className="space-y-4">
-        {orders.map((order) => (
-          <div key={order.id} className="flex items-center justify-between py-3 border-b border-gray-700 last:border-b-0">
+        {transactions.map((transaction) => (
+          <div key={transaction.id} className="flex items-center justify-between py-3 border-b border-gray-700 last:border-b-0">
             <div className="flex items-center space-x-3">
               <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
               <div>
-                {order.transactionId ? (
+                {transaction.transactionId ? (
                   <Link 
                     to={`/transactions`}
                     className="text-blue-400 hover:text-blue-300 font-medium text-sm transition-colors"
                   >
-                    {order.id}
+                    {transaction.id}
                   </Link>
                 ) : (
-                  <p className="text-blue-400 font-medium text-sm">{order.id}</p>
+                  <p className="text-blue-400 font-medium text-sm">{transaction.id}</p>
                 )}
-                <p className="text-gray-400 text-sm">{order.supplier}</p>
+                <p className="text-gray-400 text-sm">{transaction.supplier}</p>
               </div>
             </div>
             <div className="flex items-center space-x-3">
-              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                {order.status}
+              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(transaction.status)}`}>
+                {transaction.status}
               </span>
-              <p className="text-white font-medium">{order.cost}</p>
+              <p className="text-white font-medium">{transaction.cost}</p>
             </div>
           </div>
         ))}
@@ -68,4 +72,4 @@ const RecentOrders: React.FC<RecentOrdersProps> = ({ orders }) => {
   );
 };
 
-export default RecentOrders;
+export default RecentTransactions;

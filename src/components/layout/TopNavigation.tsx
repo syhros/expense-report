@@ -10,13 +10,15 @@ import {
   ShoppingCart, 
   BarChart3,
   TrendingUp,
-  LogOut
+  LogOut,
+  BookOpen
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
 const navItems = [
   { label: 'Dashboard', icon: Home, path: '/' },
-  { label: 'Transaction Log', icon: Clock, path: '/transactions' },
+  { label: 'Purchase Order Log', icon: Clock, path: '/transactions' },
+  { label: 'General Ledger', icon: BookOpen, path: '/general-ledger' },
   { label: 'Suppliers', icon: Truck, path: '/suppliers' },
   { label: 'ASINs', icon: Tag, path: '/asins' },
   { label: 'Budget', icon: DollarSign, path: '/budget' },
