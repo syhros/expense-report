@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase';
 import { TransactionWithMetrics, TransactionItem, ASIN, GeneralLedgerTransaction } from '../types/database';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { generateASINExportCSV } from '../utils/asinHelpers';
+import { importTransactionsFromCSV } from './transactionImporter';
+import { createGeneralLedgerTransaction, createSupplier, getSuppliers } from './database';
 
 // Extend jsPDF type to include autoTable
 declare module 'jspdf' {
@@ -451,7 +453,8 @@ const generateGeneralLedgerBackupCSV = (transactions: GeneralLedgerForReport[]):
     'Type',
     'Amount',
     'Payment Method',
-    'Status'
+    'Status',
+    'Director Name'
   ];
 
   let csvContent = headers.join(',') + '\n';
@@ -465,7 +468,8 @@ const generateGeneralLedgerBackupCSV = (transactions: GeneralLedgerForReport[]):
       transaction.type,
       transaction.amount.toString(),
       transaction.payment_method || '',
-      transaction.status || ''
+      transaction.status || '',
+      transaction.director_name || ''
     ];
     csvContent += escapeCSVRow(row) + '\n';
   });
@@ -850,16 +854,204 @@ const restoreReceiptsFromFolder = async (
   return restored;
 };
 
+// Helper function to parse CSV line
+const parseCSVLine = (line: string): string[] => {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  result.push(current.trim());
+  return result;
+};
+
 const importTransactionCSV = async (csvContent: string): Promise<{ imported: number; errors: string[] }> => {
-  // Implementation would parse CSV and import transactions
-  // This is a placeholder - you would implement the actual CSV parsing logic
-  return { imported: 0, errors: [] };
+  const lines = csvContent.split('\n').filter(line => line.trim());
+  const errors: string[] = [];
+  
+  if (lines.length < 2) {
+    errors.push('CSV file must contain at least a header row and one data row');
+    return { imported: 0, errors };
+  }
+
+  // Parse headers
+  const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
+  
+  // Map headers to expected field names
+  const headerMap: { [key: string]: string } = {
+    'txn id': 'txn_id',
+    'ordered date': 'ordered_date',
+    'delivery date': 'delivery_date',
+    'supplier name': 'supplier_name',
+    'po number': 'po_number',
+    'category': 'category',
+    'payment method': 'payment_method',
+    'status': 'status',
+    'shipping cost': 'shipping_cost',
+    'notes': 'notes',
+    'asin': 'asin',
+    'quantity': 'quantity',
+    'buy price': 'buy_price',
+    'sell price': 'sell_price',
+    'est fees': 'est_fees'
+  };
+
+  // Find column indices
+  const columnIndices: { [key: string]: number } = {};
+  Object.entries(headerMap).forEach(([header, field]) => {
+    const index = headers.findIndex(h => h === header);
+    if (index !== -1) {
+      columnIndices[field] = index;
+    }
+  });
+
+  // Parse data rows and convert to format expected by importTransactionsFromCSV
+  const transactionData: any[] = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i]);
+    
+    if (values.length < Math.max(...Object.values(columnIndices)) + 1) {
+      errors.push(`Row ${i + 1}: Insufficient columns`);
+      continue;
+    }
+
+    try {
+      const rowData = {
+        txn_id: columnIndices.txn_id !== undefined ? values[columnIndices.txn_id]?.replace(/"/g, '').trim() || '' : '',
+        ordered_date: columnIndices.ordered_date !== undefined ? values[columnIndices.ordered_date]?.replace(/"/g, '').trim() || '' : '',
+        delivery_date: columnIndices.delivery_date !== undefined ? values[columnIndices.delivery_date]?.replace(/"/g, '').trim() || '' : '',
+        supplier_name: columnIndices.supplier_name !== undefined ? values[columnIndices.supplier_name]?.replace(/"/g, '').trim() || '' : '',
+        po_number: columnIndices.po_number !== undefined ? values[columnIndices.po_number]?.replace(/"/g, '').trim() || '' : '',
+        category: columnIndices.category !== undefined ? values[columnIndices.category]?.replace(/"/g, '').trim() || 'Stock' : 'Stock',
+        payment_method: columnIndices.payment_method !== undefined ? values[columnIndices.payment_method]?.replace(/"/g, '').trim() || 'AMEX Plat' : 'AMEX Plat',
+        status: columnIndices.status !== undefined ? values[columnIndices.status]?.replace(/"/g, '').trim() || 'ordered' : 'ordered',
+        shipping_cost: parseFloat(columnIndices.shipping_cost !== undefined ? values[columnIndices.shipping_cost]?.replace(/"/g, '') || '0' : '0') || 0,
+        notes: columnIndices.notes !== undefined ? values[columnIndices.notes]?.replace(/"/g, '').trim() || '' : '',
+        asin: columnIndices.asin !== undefined ? values[columnIndices.asin]?.replace(/"/g, '').trim() || '' : '',
+        quantity: parseInt(columnIndices.quantity !== undefined ? values[columnIndices.quantity]?.replace(/"/g, '') || '1' : '1') || 1,
+        buy_price: parseFloat(columnIndices.buy_price !== undefined ? values[columnIndices.buy_price]?.replace(/"/g, '') || '0' : '0') || 0,
+        sell_price: parseFloat(columnIndices.sell_price !== undefined ? values[columnIndices.sell_price]?.replace(/"/g, '') || '0' : '0') || 0,
+        est_fees: parseFloat(columnIndices.est_fees !== undefined ? values[columnIndices.est_fees]?.replace(/"/g, '') || '0' : '0') || 0
+      };
+
+      // Skip rows without required data
+      if (!rowData.supplier_name || !rowData.asin) {
+        continue;
+      }
+
+      transactionData.push(rowData);
+    } catch (err) {
+      errors.push(`Row ${i + 1}: ${err instanceof Error ? err.message : 'Parse error'}`);
+    }
+  }
+
+  // Use existing import function
+  try {
+    const result = await importTransactionsFromCSV(transactionData);
+    return {
+      imported: result.imported,
+      errors: [...errors, ...result.errors]
+    };
+  } catch (err) {
+    errors.push(`Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    return { imported: 0, errors };
+  }
 };
 
 const importGeneralLedgerCSV = async (csvContent: string): Promise<{ imported: number; errors: string[] }> => {
-  // Implementation would parse CSV and import general ledger transactions
-  // This is a placeholder - you would implement the actual CSV parsing logic
-  return { imported: 0, errors: [] };
+  const lines = csvContent.split('\n').filter(line => line.trim());
+  const errors: string[] = [];
+  let imported = 0;
+  
+  if (lines.length < 2) {
+    errors.push('CSV file must contain at least a header row and one data row');
+    return { imported: 0, errors };
+  }
+
+  // Parse headers
+  const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
+  
+  // Map headers to expected field names
+  const headerMap: { [key: string]: string } = {
+    'txn id': 'txn_id',
+    'date': 'date',
+    'category': 'category',
+    'reference': 'reference',
+    'type': 'type',
+    'amount': 'amount',
+    'payment method': 'payment_method',
+    'status': 'status',
+    'director name': 'director_name'
+  };
+
+  // Find column indices
+  const columnIndices: { [key: string]: number } = {};
+  Object.entries(headerMap).forEach(([header, field]) => {
+    const index = headers.findIndex(h => h === header);
+    if (index !== -1) {
+      columnIndices[field] = index;
+    }
+  });
+
+  // Check for required columns
+  const requiredColumns = ['date', 'category', 'type', 'amount'];
+  const missingColumns = requiredColumns.filter(col => columnIndices[col] === undefined);
+  
+  if (missingColumns.length > 0) {
+    errors.push(`Missing required columns: ${missingColumns.join(', ')}`);
+    return { imported: 0, errors };
+  }
+
+  // Parse data rows
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i]);
+    
+    if (values.length < Math.max(...Object.values(columnIndices)) + 1) {
+      errors.push(`Row ${i + 1}: Insufficient columns`);
+      continue;
+    }
+
+    try {
+      const rowData = {
+        date: columnIndices.date !== undefined ? values[columnIndices.date]?.replace(/"/g, '').trim() || '' : '',
+        category: columnIndices.category !== undefined ? values[columnIndices.category]?.replace(/"/g, '').trim() || '' : '',
+        reference: columnIndices.reference !== undefined ? values[columnIndices.reference]?.replace(/"/g, '').trim() || '' : '',
+        type: columnIndices.type !== undefined ? values[columnIndices.type]?.replace(/"/g, '').trim() || '' : '',
+        amount: parseFloat(columnIndices.amount !== undefined ? values[columnIndices.amount]?.replace(/"/g, '') || '0' : '0') || 0,
+        payment_method: columnIndices.payment_method !== undefined ? values[columnIndices.payment_method]?.replace(/"/g, '').trim() || 'AMEX Plat' : 'AMEX Plat',
+        status: columnIndices.status !== undefined ? values[columnIndices.status]?.replace(/"/g, '').trim() || 'pending' : 'pending',
+        director_name: columnIndices.director_name !== undefined ? values[columnIndices.director_name]?.replace(/"/g, '').trim() || undefined : undefined
+      };
+
+      // Validate required fields
+      if (!rowData.date || !rowData.category || !rowData.type || rowData.amount === 0) {
+        errors.push(`Row ${i + 1}: Missing required data`);
+        continue;
+      }
+
+      // Create the transaction
+      await createGeneralLedgerTransaction(rowData);
+      imported++;
+
+    } catch (err) {
+      errors.push(`Row ${i + 1}: ${err instanceof Error ? err.message : 'Import error'}`);
+    }
+  }
+
+  return { imported, errors };
 };
 
 // --- UTILITY FUNCTIONS ---
