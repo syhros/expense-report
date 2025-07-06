@@ -1,35 +1,48 @@
 import React, { useState } from 'react';
-import { Plus, Search, Filter, Warehouse, Box, Package } from 'lucide-react';
+import { Search, Filter, Warehouse, Box, Package } from 'lucide-react';
 import Card from '../components/shared/Card';
+import InventoryItemModal from '../components/modals/InventoryItemModal';
 import { useASINsWithMetrics } from '../hooks/useData';
-import { updateASIN } from '../services/database';
 import { formatCurrency } from '../utils/formatters';
 
-type FilterCategory = 'all' | 'in-stock' | 'low-stock' | 'out-of-stock' | 'in-warehouse';
+type FilterCategory = 'all' | 'shipped-stock' | 'ordered' | 'in-warehouse';
 
 const Inventory: React.FC = () => {
   const { asins, loading, error, refetch } = useASINsWithMetrics();
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterCategory>('all');
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
-  const [shipAmount, setShipAmount] = useState<number>(0);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
+
+  // Calculate additional metrics for each ASIN
+  const asinsWithMetrics = asins.map(asin => {
+    // Calculate ordered quantity (total quantity minus completed quantity)
+    const orderedQuantity = asin.totalQuantity - asin.adjustedQuantity;
+    
+    // Calculate inventory (completed items minus shipped)
+    const inventoryQuantity = Math.max(0, asin.adjustedQuantity - asin.shipped);
+    
+    return {
+      ...asin,
+      orderedQuantity,
+      inventoryQuantity
+    };
+  });
 
   // Filter ASINs based on search term and category
-  const filteredAsins = asins.filter(asin => {
+  const filteredAsins = asinsWithMetrics.filter(asin => {
     const matchesSearch = asin.asin.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (asin.title && asin.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (asin.brand && asin.brand.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const matchesFilter = (() => {
       switch (activeFilter) {
-        case 'in-stock':
-          return asin.adjustedQuantity > 5;
-        case 'low-stock':
-          return asin.adjustedQuantity > 0 && asin.adjustedQuantity <= 5;
-        case 'out-of-stock':
-          return asin.adjustedQuantity === 0;
+        case 'shipped-stock':
+          return asin.shipped > 0;
+        case 'ordered':
+          return asin.orderedQuantity > 0;
         case 'in-warehouse':
-          return asin.stored > 0;
+          return asin.inventoryQuantity > 0;
         default:
           return true;
       }
@@ -40,30 +53,17 @@ const Inventory: React.FC = () => {
 
   // Calculate total stock level
   const totalStockLevel = asins.reduce((sum, asin) => sum + asin.adjustedQuantity, 0);
-  const inStockCount = asins.filter(asin => asin.adjustedQuantity > 5).length;
-  const lowStockCount = asins.filter(asin => asin.adjustedQuantity > 0 && asin.adjustedQuantity <= 5).length;
-  const outOfStockCount = asins.filter(asin => asin.adjustedQuantity === 0).length;
-  const inWarehouseCount = asins.filter(asin => asin.stored > 0).length;
+  const shippedStockCount = asins.filter(asin => asin.shipped > 0).length;
+  const orderedCount = asinsWithMetrics.filter(asin => asin.orderedQuantity > 0).length;
+  const inWarehouseCount = asinsWithMetrics.filter(asin => asin.inventoryQuantity > 0).length;
 
-  const handleItemClick = (asinId: string) => {
-    setSelectedItem(asinId);
-    setShipAmount(0);
-  };
-
-  const handleShipUpdate = async () => {
-    if (selectedItem && shipAmount > 0) {
-      try {
-        const asin = asins.find(a => a.id === selectedItem);
-        if (asin) {
-          await updateASIN(asin.id, { shipped: asin.shipped + shipAmount });
-          refetch();
-          setSelectedItem(null);
-          setShipAmount(0);
-        }
-      } catch (err) {
-        console.error('Failed to update shipped amount:', err);
-      }
-    }
+  // Get the selected item details
+  const selectedItem = selectedItemId ? asinsWithMetrics.find(asin => asin.id === selectedItemId) || null : null;
+  
+  // Handle opening the modal when clicking on an item
+  const handleItemClick = (asin: ASINWithMetrics) => {
+    setSelectedItemId(asin.id);
+    setShowModal(true);
   };
 
   const getFilterButtonClass = (filter: FilterCategory) => {
@@ -178,7 +178,7 @@ const Inventory: React.FC = () => {
           </div>
           
           {/* Clickable Summary Statistics */}
-          <div className="grid grid-cols-5 gap-6 flex-1 max-w-5xl">
+          <div className="grid grid-cols-4 gap-6 flex-1 max-w-4xl">
             <div 
               className={getFilterButtonClass('all')}
               onClick={() => setActiveFilter('all')}
@@ -187,47 +187,34 @@ const Inventory: React.FC = () => {
                 <div className="p-2 bg-blue-600/80 backdrop-blur-sm rounded-lg w-fit mx-auto mb-2">
                   <Box className="h-5 w-5 text-white" />
                 </div>
-                <p className="text-sm font-medium">Total ASINs</p>
+                <p className="text-sm font-medium">All Stock</p>
                 <p className="text-2xl font-bold mt-1">{asins.length}</p>
               </div>
             </div>
 
             <div 
-              className={getFilterButtonClass('in-stock')}
-              onClick={() => setActiveFilter('in-stock')}
+              className={getFilterButtonClass('shipped-stock')}
+              onClick={() => setActiveFilter('shipped-stock')}
             >
               <div className="text-center">
                 <div className="p-2 bg-green-600/80 backdrop-blur-sm rounded-lg w-fit mx-auto mb-2">
-                  <span className="text-white text-lg">✅</span>
+                  <span className="text-white text-lg">📦</span>
                 </div>
-                <p className="text-sm font-medium">In Stock</p>
-                <p className="text-2xl font-bold mt-1">{inStockCount}</p>
+                <p className="text-sm font-medium">Shipped Stock</p>
+                <p className="text-2xl font-bold mt-1">{shippedStockCount}</p>
               </div>
             </div>
 
             <div 
-              className={getFilterButtonClass('low-stock')}
-              onClick={() => setActiveFilter('low-stock')}
+              className={getFilterButtonClass('ordered')}
+              onClick={() => setActiveFilter('ordered')}
             >
               <div className="text-center">
-                <div className="p-2 bg-yellow-600/80 backdrop-blur-sm rounded-lg w-fit mx-auto mb-2">
-                  <span className="text-white text-lg">⚠️</span>
+                <div className="p-2 bg-orange-600/80 backdrop-blur-sm rounded-lg w-fit mx-auto mb-2">
+                  <span className="text-white text-lg">🛒</span>
                 </div>
-                <p className="text-sm font-medium">Low Stock</p>
-                <p className="text-2xl font-bold mt-1">{lowStockCount}</p>
-              </div>
-            </div>
-
-            <div 
-              className={getFilterButtonClass('out-of-stock')}
-              onClick={() => setActiveFilter('out-of-stock')}
-            >
-              <div className="text-center">
-                <div className="p-2 bg-red-600/80 backdrop-blur-sm rounded-lg w-fit mx-auto mb-2">
-                  <span className="text-white text-lg">🚫</span>
-                </div>
-                <p className="text-sm font-medium">Out of Stock</p>
-                <p className="text-2xl font-bold mt-1">{outOfStockCount}</p>
+                <p className="text-sm font-medium">Ordered</p>
+                <p className="text-2xl font-bold mt-1">{orderedCount}</p>
               </div>
             </div>
 
@@ -279,20 +266,18 @@ const Inventory: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
           {filteredAsins.map((asin) => {
-            // Calculate average profit for this ASIN
-            const averageProfit = asin.averageBuyPrice > 0 ? 
-              (asin.averageBuyPrice * 0.3) : 0; // Mock calculation - would need real data
-            
             return (
               <Card 
                 key={asin.id} 
                 className={`overflow-hidden hover:bg-white/15 transition-all duration-300 group cursor-pointer ${
-                  selectedItem === asin.id ? 'ring-2 ring-blue-500' : ''
+                  selectedItemId === asin.id ? 'ring-2 ring-blue-500' : ''
                 }`}
-                onClick={() => handleItemClick(asin.id)}
               >
                 {/* Product Image */}
-                <div className="aspect-square bg-gray-700/50 backdrop-blur-sm relative overflow-hidden">
+                <div 
+                  className="aspect-square bg-gray-700/50 backdrop-blur-sm relative overflow-hidden cursor-pointer"
+                  onClick={() => handleItemClick(asin)}
+                >
                   {asin.image_url ? (
                     <img
                       src={asin.image_url}
@@ -311,19 +296,27 @@ const Inventory: React.FC = () => {
                   {/* Stock Level Badge */}
                   <div className="absolute top-3 right-3">
                     <div className={`px-2 py-1 rounded-full text-xs font-medium backdrop-blur-sm ${
-                      asin.adjustedQuantity > 10 
-                        ? 'bg-green-600/80 text-green-100' 
-                        : asin.adjustedQuantity > 0 
-                          ? 'bg-yellow-600/80 text-yellow-100' 
-                          : 'bg-red-600/80 text-red-100'
+                      asin.orderedQuantity > 0
+                        ? 'bg-orange-600/80 text-orange-100' 
+                        : asin.inventoryQuantity > 0 
+                          ? 'bg-green-600/80 text-green-100' 
+                          : asin.shipped > 0
+                            ? 'bg-blue-600/80 text-blue-100'
+                            : 'bg-red-600/80 text-red-100'
                     }`}>
-                      {asin.adjustedQuantity} units
+                      {asin.orderedQuantity > 0 
+                        ? `${asin.orderedQuantity} ordered` 
+                        : asin.inventoryQuantity > 0 
+                          ? `${asin.inventoryQuantity} in stock` 
+                          : asin.shipped > 0
+                            ? '📦 All Sent'
+                            : '🚫 Out of Stock'}
                     </div>
                   </div>
                 </div>
 
                 {/* Product Details */}
-                <div className="p-4">
+                <div className="p-4 cursor-pointer" onClick={() => handleItemClick(asin)}>
                   {/* Title and ASIN */}
                   <div className="mb-3">
                     <h3 className="text-white font-medium text-sm leading-tight mb-1 line-clamp-2">
@@ -348,25 +341,25 @@ const Inventory: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-gray-400 text-xs">Avg. Profit</p>
-                      <p className={`font-semibold ${averageProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(averageProfit)}
+                      <p className={`font-semibold ${asin.averageProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(asin.averageProfit)}
                       </p>
                     </div>
                   </div>
 
                   {/* Stock Information */}
                   <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-2">
-                      <p className="text-xs text-gray-400">Total</p>
-                      <p className="text-sm font-semibold text-white">{asin.adjustedQuantity}</p>
+                    <div className="bg-orange-900/30 backdrop-blur-sm rounded-lg p-2">
+                      <p className="text-xs text-orange-400">Ordered</p>
+                      <p className="text-sm font-semibold text-orange-300">{asin.orderedQuantity}</p>
+                    </div>
+                    <div className="bg-green-900/30 backdrop-blur-sm rounded-lg p-2">
+                      <p className="text-xs text-green-400">Stored</p>
+                      <p className="text-sm font-semibold text-green-300">{asin.inventoryQuantity}</p>
                     </div>
                     <div className="bg-blue-900/30 backdrop-blur-sm rounded-lg p-2">
                       <p className="text-xs text-blue-400">Shipped</p>
                       <p className="text-sm font-semibold text-blue-300">{asin.shipped}</p>
-                    </div>
-                    <div className="bg-green-900/30 backdrop-blur-sm rounded-lg p-2">
-                      <p className="text-xs text-green-400">Inv</p>
-                      <p className="text-sm font-semibold text-green-300">{asin.stored}</p>
                     </div>
                   </div>
 
@@ -381,23 +374,6 @@ const Inventory: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Low Stock Warning */}
-                  {asin.adjustedQuantity <= 5 && asin.adjustedQuantity > 0 && (
-                    <div className="mt-3 bg-yellow-900/30 backdrop-blur-sm border border-yellow-600/30 rounded-lg p-2">
-                      <p className="text-yellow-300 text-xs text-center font-medium">
-                        ⚠️ Low Stock
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Out of Stock Warning */}
-                  {asin.adjustedQuantity === 0 && (
-                    <div className="mt-3 bg-red-900/30 backdrop-blur-sm border border-red-600/30 rounded-lg p-2">
-                      <p className="text-red-300 text-xs text-center font-medium">
-                        🚫 Out of Stock
-                      </p>
-                    </div>
-                  )}
                 </div>
               </Card>
             );
@@ -405,44 +381,16 @@ const Inventory: React.FC = () => {
         </div>
       )}
 
-      {/* Ship Update Modal */}
-      {selectedItem && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-gray-800/90 backdrop-blur-xl border border-gray-600/30 rounded-2xl p-6 w-96">
-            <h3 className="text-lg font-semibold text-white mb-4">Update Shipped Quantity</h3>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-400 mb-2">
-                Amount to Ship
-              </label>
-              <input
-                type="number"
-                value={shipAmount}
-                onChange={(e) => setShipAmount(parseInt(e.target.value) || 0)}
-                className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300"
-                min="0"
-                placeholder="Enter amount to ship"
-              />
-            </div>
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setSelectedItem(null);
-                  setShipAmount(0);
-                }}
-                className="px-4 py-2 text-gray-400 hover:text-white transition-all duration-300 hover:scale-102"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleShipUpdate}
-                className="bg-blue-600/80 backdrop-blur-sm hover:bg-blue-700 text-white px-4 py-2 rounded-xl transition-all duration-300 hover:scale-102"
-              >
-                Update
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Inventory Item Modal */}
+      <InventoryItemModal
+        isOpen={showModal}
+        onClose={() => {
+          setShowModal(false);
+          setSelectedItemId(null);
+        }}
+        onSuccess={refetch}
+        item={selectedItem}
+      />
     </div>
   );
 };

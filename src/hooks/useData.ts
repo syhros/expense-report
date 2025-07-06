@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { 
-  getSuppliers, 
+  getSuppliers,
   getASINs, 
   getASINsWithMetrics,
   getTransactions, 
@@ -12,7 +12,8 @@ import {
   getCurrentBudget,
   getCategories,
   getGeneralLedgerTransactions,
-  getUniqueDirectors
+  getUniqueDirectors,
+  getAllASINs
 } from '../services/database';
 import { 
   Supplier, 
@@ -78,10 +79,35 @@ export const useASINs = () => {
   return { asins, loading, error, refetch: fetchASINs };
 };
 
+export const useAllASINs = () => {
+  const [asins, setAsins] = useState<ASIN[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchASINs = async () => {
+    try {
+      setLoading(true);
+      const data = await getAllASINs();
+      setAsins(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch all ASINs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchASINs();
+  }, []);
+
+  return { asins, loading, error, refetch: fetchASINs };
+};
+
 export const useASINsWithMetrics = () => {
   const [asins, setAsins] = useState<ASINWithMetrics[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); 
 
   const fetchASINs = async () => {
     try {
@@ -92,7 +118,7 @@ export const useASINsWithMetrics = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch ASINs with metrics');
     } finally {
-      setLoading(false);
+      setLoading(false); 
     }
   };
 

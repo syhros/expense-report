@@ -4,11 +4,13 @@ import Card from '../components/shared/Card';
 import ASINModal from '../components/modals/ASINModal';
 import TransactionModal from '../components/modals/TransactionModal';
 import { useASINsWithMetrics } from '../hooks/useData';
-import { updateASIN, deleteASIN, getTransactionsByASIN, createASIN } from '../services/database';
+import { updateASIN, deleteASIN, getTransactionsByASIN, createASIN, getAllASINs, getASINsByCategory, createASINPricingHistory } from '../services/database';
+import { getTransactionItems, getTransactions } from '../services/database';
 import { formatCurrency, truncateText, formatDate } from '../utils/formatters';
 import { TransactionWithMetrics } from '../types/database';
 import { downloadCSVTemplate, parseASINCSV } from '../utils/csvHelpers';
 import { downloadASINExport } from '../utils/asinHelpers';
+import { ASINWithMetrics } from '../types/database';
 
 const ASINs: React.FC = () => {
   const { asins, loading, error, refetch } = useASINsWithMetrics();
@@ -34,6 +36,11 @@ const ASINs: React.FC = () => {
 
   // Filter states
   const [showIncompleteOnly, setShowIncompleteOnly] = useState(false);
+  const [showOtherCategory, setShowOtherCategory] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // State for displaying ASINs
+  const [displayAsins, setDisplayAsins] = useState<ASINWithMetrics[]>([]);
 
   const handleEdit = (asin: any) => {
     setEditingId(asin.id);
@@ -83,66 +90,73 @@ const ASINs: React.FC = () => {
     setShowASINModal(true);
   };
 
-  const handleModalSuccess = () => {
-    refetch();
-  };
-
-  const handleDeleteClick = (asinId: string) => {
-    if (deletingId === asinId) {
-      // Second click - show confirmation modal
-      const asin = asins.find(a => a.id === asinId);
-      setShowDeleteModal(asinId);
-      setDeletingId(null);
-    } else {
-      // First click - show tick/cross
-      setDeletingId(asinId);
-    }
-  };
-
-  const handleDeleteCancel = () => {
-    setDeletingId(null);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (showDeleteModal) {
-      try {
-        await deleteASIN(showDeleteModal);
-        setShowDeleteModal(null);
-        refetch();
-      } catch (err) {
-        console.error('Failed to delete ASIN:', err);
-      }
-    }
-  };
-
-  const handleViewTransactions = async (asinCode: string) => {
-    setLoadingTransactions(true);
-    setShowTransactionsModal(asinCode);
-    
-    try {
-      const transactions = await getTransactionsByASIN(asinCode);
-      setAsinTransactions(transactions);
-    } catch (err) {
-      console.error('Failed to load ASIN transactions:', err);
-      setAsinTransactions([]);
-    } finally {
-      setLoadingTransactions(false);
-    }
-  };
-
   const handleTransactionClick = (transaction: TransactionWithMetrics) => {
     setSelectedTransaction(transaction);
     setShowTransactionModal(true);
     setShowTransactionsModal(null);
   };
 
-  const handleTransactionModalSuccess = () => {
-    refetch();
-    // Reload transactions for the current ASIN if modal is still open
-    if (showTransactionsModal) {
-      handleViewTransactions(showTransactionsModal);
+  // Load ASINs based on current filter
+  const loadASINs = async () => {
+    try {
+      let asinData: ASINWithMetrics[] = [];
+      
+      if (showOtherCategory) {
+        // Load Other category ASINs with metrics calculation
+        const otherAsins = await getASINsByCategory('Other');
+        const [transactionItems, transactions] = await Promise.all([
+          getTransactionItems(),
+          getTransactions()
+        ]);
+        
+        asinData = otherAsins.map(asin => {
+          const asinItems = transactionItems.filter(item => item.asin === asin.asin);
+          
+          // Calculate total cost and quantity for this ASIN
+          const totalCost = asinItems.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
+          const totalQuantity = asinItems.reduce((sum, item) => sum + item.quantity, 0);
+          
+          // Calculate average buy price (COG)
+          const averageBuyPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+          
+          return {
+            ...asin,
+            averageBuyPrice,
+            totalQuantity,
+            adjustedQuantity: 0, // Other category doesn't track inventory
+            stored: 0
+          };
+        });
+      } else {
+        // Use existing Stock ASINs
+        asinData = asins;
+      }
+      
+      setDisplayAsins(asinData);
+    } catch (err) {
+      console.error('Failed to load ASINs:', err);
     }
   };
+
+  // Load ASINs when filters change
+  React.useEffect(() => {
+    if (!loading) {
+      loadASINs();
+    }
+  }, [showOtherCategory, asins, loading]);
+
+  // Filter ASINs based on search term and incomplete filter
+  const filteredAsins = displayAsins.filter(asin => {
+    const matchesSearch = asin.asin.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (asin.title && asin.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (asin.brand && asin.brand.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesIncomplete = showIncompleteOnly ? 
+      (!asin.title || asin.title.trim() === '' || asin.title === 'No title' || 
+       !asin.image_url || asin.image_url.trim() === '' || asin.image_url === 'No image') : true;
+
+    return matchesSearch && matchesIncomplete;
+  });
 
   // Import functionality
   const handleImportClick = () => {
@@ -161,7 +175,7 @@ const ASINs: React.FC = () => {
       const text = await file.text();
       const { data, errors } = parseASINCSV(text);
 
-      if (errors.length > 0) {
+      if (errors.length > 0) { 
         setImportError(`Import errors: ${errors.join('; ')}`);
         return;
       }
@@ -171,8 +185,22 @@ const ASINs: React.FC = () => {
 
       for (const asinData of data) {
         try {
-          await createASIN(asinData);
+          // Create or update the ASIN
+          const createdAsin = await createASIN({
+            asin: asinData.asin,
+            title: asinData.title,
+            brand: asinData.brand,
+            image_url: asinData.image_url,
+            type: asinData.type,
+            pack: asinData.pack,
+            category: asinData.category
+          });
           importedCount++;
+          
+          // If pricing data is provided, create pricing history entry
+          if (asinData.has_pricing) {
+            await createASINPricingHistory({ asin: asinData.asin, buy_price: asinData.buy_price, sell_price: asinData.sell_price, est_fees: asinData.est_fee });
+          }
         } catch (err) {
           console.error(`Failed to import ASIN ${asinData.asin}:`, err);
           skippedCount++;
@@ -180,7 +208,7 @@ const ASINs: React.FC = () => {
       }
 
       setImportSuccess(`Successfully imported ${importedCount} ASINs. ${skippedCount} skipped due to duplicates or errors.`);
-      refetch();
+      loadASINs();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Failed to import CSV file');
     } finally {
@@ -193,17 +221,8 @@ const ASINs: React.FC = () => {
 
   // Export functionality
   const handleExportClick = () => {
-    downloadASINExport(asins);
+    downloadASINExport(filteredAsins);
   };
-
-  // Filter ASINs based on incomplete filter
-  const filteredAsins = showIncompleteOnly 
-    ? asins.filter(asin => 
-        asin.category === 'Stock' && 
-        (!asin.title || asin.title.trim() === '' || asin.title === 'No title' || 
-         !asin.image_url || asin.image_url.trim() === '' || asin.image_url === 'No image')
-      )
-    : asins;
 
   // Helper function to format title into 2 lines, 64 chars each
   const formatTitleTwoLines = (title: string | null): { line1: string; line2: string } => {
@@ -230,6 +249,61 @@ const ASINs: React.FC = () => {
     return { line1, line2 };
   };
 
+  const handleModalSuccess = () => {
+    loadASINs();
+  };
+
+  const handleDeleteClick = (asinId: string) => {
+    if (deletingId === asinId) {
+      // Second click - show confirmation modal
+      const asin = asins.find(a => a.id === asinId);
+      setShowDeleteModal(asinId);
+      setDeletingId(null);
+    } else {
+      // First click - show tick/cross
+      setDeletingId(asinId);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeletingId(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (showDeleteModal) {
+      try {
+        await deleteASIN(showDeleteModal);
+        setShowDeleteModal(null);
+        loadASINs();
+      } catch (err) {
+        console.error('Failed to delete ASIN:', err);
+      }
+    }
+  };
+
+  const handleViewTransactions = async (asinCode: string) => {
+    setLoadingTransactions(true);
+    setShowTransactionsModal(asinCode);
+    
+    try {
+      const transactions = await getTransactionsByASIN(asinCode);
+      setAsinTransactions(transactions);
+    } catch (err) {
+      console.error('Failed to load ASIN transactions:', err);
+      setAsinTransactions([]);
+    } finally {
+      setLoadingTransactions(false);
+    }
+  };
+
+  const handleTransactionModalSuccess = () => {
+    loadASINs();
+    // Reload transactions for the current ASIN if modal is still open
+    if (showTransactionsModal) {
+      handleViewTransactions(showTransactionsModal);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -248,6 +322,16 @@ const ASINs: React.FC = () => {
               }`}
             >
               Incomplete
+            </button>
+            <button 
+              onClick={() => setShowOtherCategory(!showOtherCategory)}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                showOtherCategory 
+                  ? 'bg-purple-600 hover:bg-purple-700 text-white' 
+                  : 'bg-gray-700 hover:bg-gray-600 text-white'
+              }`}
+            >
+              Other
             </button>
             <button 
               onClick={downloadCSVTemplate}
@@ -311,6 +395,16 @@ const ASINs: React.FC = () => {
               Incomplete
             </button>
             <button 
+              onClick={() => setShowOtherCategory(!showOtherCategory)}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                showOtherCategory 
+                  ? 'bg-purple-600 hover:bg-purple-700 text-white' 
+                  : 'bg-gray-700 hover:bg-gray-600 text-white'
+              }`}
+            >
+              Other
+            </button>
+            <button 
               onClick={downloadCSVTemplate}
               className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center space-x-2"
             >
@@ -372,6 +466,16 @@ const ASINs: React.FC = () => {
             }`}
           >
             Incomplete
+          </button>
+          <button 
+            onClick={() => setShowOtherCategory(!showOtherCategory)}
+            className={`px-4 py-2 rounded-lg transition-colors ${
+              showOtherCategory 
+                ? 'bg-purple-600 hover:bg-purple-700 text-white' 
+                : 'bg-gray-700 hover:bg-gray-600 text-white'
+            }`}
+          >
+            Other
           </button>
           <button 
             onClick={downloadCSVTemplate}
@@ -443,6 +547,19 @@ const ASINs: React.FC = () => {
         </Card>
       )}
 
+      {/* Search Bar */}
+      <Card className="p-4">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search ASINs by ASIN, title, or brand..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300"
+          />
+        </div>
+      </Card>
+
       {/* Filter Status */}
       {showIncompleteOnly && (
         <Card className="p-4 bg-orange-900/20 border-orange-600/30">
@@ -466,6 +583,23 @@ const ASINs: React.FC = () => {
         </Card>
       )}
 
+      {/* Other Category Status */}
+      {showOtherCategory && (
+        <Card className="p-4 bg-purple-900/20 border-purple-600/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Package className="h-5 w-5 text-purple-400" />
+              <div>
+                <h3 className="text-purple-300 font-medium">Showing Other Category ASINs</h3>
+                <p className="text-purple-400 text-sm">
+                  Displaying {filteredAsins.length} non-stock ASINs
+                </p>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* ASINs Table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -473,7 +607,7 @@ const ASINs: React.FC = () => {
             <thead className="bg-gray-750 border-b border-gray-700">
               <tr>
                 <th className="px-3 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  {/* Empty header for image column */}
+                  
                 </th>
                 <th className="px-3 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                   ASIN
@@ -484,38 +618,55 @@ const ASINs: React.FC = () => {
                 <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
                   AVG COG
                 </th>
+                {!showOtherCategory && (
+                  <>
                 <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Type
                 </th>
+                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Bundle
+                    </th>
+                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Total QTY
+                    </th>
+                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Ordered
+                    </th>
+                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Inv
+                    </th>
+                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      Shipped
+                    </th>
+                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      TXNs
+                    </th>
+                  </>
+                )}
+                {showOtherCategory && (
+                  <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    Category
+                  </th>
+                )}
                 <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  BUNDLE
-                </th>
-                <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  QTY
-                </th>
-                <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Shipped
-                </th>
-                <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  INV
-                </th>
-                <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Transactions
-                </th>
-                <th className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Delete
+                  
                 </th>
               </tr>
             </thead>
             <tbody className="bg-gray-800 divide-y divide-gray-700">
               {filteredAsins.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center">
+                  <td colSpan={showOtherCategory ? 6 : 12} className="px-6 py-12 text-center">
                     <div className="text-gray-400">
                       {showIncompleteOnly ? (
                         <>
                           <p className="text-lg mb-2">No incomplete ASINs found</p>
                           <p className="text-sm">All your Stock ASINs have complete title and image information</p>
+                        </>
+                      ) : showOtherCategory ? (
+                        <>
+                          <p className="text-lg mb-2">No Other category ASINs found</p>
+                          <p className="text-sm">Other category ASINs will appear here when you add them</p>
                         </>
                       ) : (
                         <>
@@ -530,10 +681,19 @@ const ASINs: React.FC = () => {
                 filteredAsins.map((asin) => {
                   const titleLines = formatTitleTwoLines(asin.title);
                   
+                  // Calculate ordered quantity (items in transactions that are not complete)
+                  const orderedQuantity = asin.totalQuantity - asin.adjustedQuantity;
+                  
+                  // Calculate inventory (items in complete transactions minus shipped)
+                  const inventoryQuantity = Math.max(0, asin.adjustedQuantity - asin.shipped);
+                  
+                  // Calculate total quantity (ordered + inventory + shipped)
+                  const totalQuantity = orderedQuantity + inventoryQuantity + asin.shipped;
+                  
                   return (
                     <tr key={asin.id} className="hover:bg-gray-750">
                       <td className="px-2 py-2 whitespace-nowrap">
-                        <div className="w-10 h-10 bg-gray-700 rounded border border-gray-600 flex items-center justify-center overflow-hidden">
+                        <div className="w-16 h-16 bg-gray-700 rounded border border-gray-600 flex items-center justify-center overflow-hidden">
                           {asin.image_url ? (
                             <img
                               src={asin.image_url}
@@ -597,8 +757,10 @@ const ASINs: React.FC = () => {
                         )}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
-                        <span className="text-sm">{formatCurrency(asin.averageBuyPrice)}</span>
+                        <span className="text-sm">{formatCurrency(asin.averageBuyPrice || 0)}</span>
                       </td>
+                      {!showOtherCategory && (
+                        <>
                       <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
                         {editingId === asin.id ? (
                           <select
@@ -619,11 +781,17 @@ const ASINs: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
-                        <span className="text-sm">{asin.adjustedQuantity}</span>
+                        <span className="text-sm">{totalQuantity}</span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
+                        <span className="text-sm">{orderedQuantity}</span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
+                        <span className="text-sm">{inventoryQuantity}</span>
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
                         <div className="flex items-center justify-center space-x-2">
-                          <span className="text-sm">{asin.shipped}</span>
+                          <span className="text-sm">{asin.shipped || 0}</span>
                           <button
                             onClick={() => setShowShipModal(asin.id)}
                             className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs flex items-center space-x-1"
@@ -633,10 +801,7 @@ const ASINs: React.FC = () => {
                           </button>
                         </div>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
-                        <span className="text-sm">{asin.stored}</span>
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
+                      <td className="px-3 py-4 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
                         <button
                           onClick={() => handleViewTransactions(asin.asin)}
                           className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs flex items-center space-x-1 mx-auto"
@@ -645,6 +810,13 @@ const ASINs: React.FC = () => {
                           <span>View</span>
                         </button>
                       </td>
+                        </>
+                      )}
+                      {showOtherCategory && (
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
+                          <span className="text-sm text-purple-400">{asin.category}</span>
+                        </td>
+                      )}
                       <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-300 text-center">
                         {editingId === asin.id ? (
                           <div className="flex items-center justify-center space-x-1">
@@ -656,7 +828,7 @@ const ASINs: React.FC = () => {
                             </button>
                             <button
                               onClick={handleCancel}
-                              className="text-red-400 hover:text-red-300 p-1"
+                              className="text-red-400 hover:text-red-300 p-1" 
                             >
                               <X className="h-3 w-3" />
                             </button>
@@ -683,7 +855,7 @@ const ASINs: React.FC = () => {
                             ) : (
                               <button
                                 onClick={() => handleDeleteClick(asin.id)}
-                                className="text-red-400 hover:text-red-300 p-1"
+                                className="text-red-400 hover:text-red-300 p-1" 
                                 title="Delete ASIN"
                               >
                                 <Trash2 className="h-3 w-3" />
@@ -731,7 +903,7 @@ const ASINs: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  const asin = asins.find(a => a.id === showShipModal);
+                  const asin = filteredAsins.find(a => a.id === showShipModal);
                   if (asin) {
                     handleShip(asin.id, asin.shipped);
                   }
@@ -824,11 +996,11 @@ const ASINs: React.FC = () => {
             <h3 className="text-lg font-semibold text-white mb-4 text-center">Delete ASIN</h3>
             <div className="text-center mb-6">
               <p className="text-gray-300 mb-2">
-                Delete <span className="font-mono text-blue-400">{asins.find(a => a.id === showDeleteModal)?.asin}</span>
+                Delete <span className="font-mono text-blue-400">{filteredAsins.find(a => a.id === showDeleteModal)?.asin}</span>
               </p>
               <p className="text-gray-300">
-                {asins.find(a => a.id === showDeleteModal)?.title ? 
-                  truncateText(asins.find(a => a.id === showDeleteModal)!.title!, 48) : 
+                {filteredAsins.find(a => a.id === showDeleteModal)?.title ? 
+                  truncateText(filteredAsins.find(a => a.id === showDeleteModal)!.title!, 48) : 
                   'No title'
                 }
               </p>

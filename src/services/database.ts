@@ -95,17 +95,6 @@ const generateNextGeneralLedgerNumber = async (): Promise<string> => {
   return `GL-${nextNumber.toString().padStart(5, '0')}`;
 };
 
-// Categories
-export const getCategories = async (): Promise<Category[]> => {
-  const { data, error } = await supabase
-    .from('categories')
-    .select('*')
-    .order('name');
-  
-  if (error) throw error;
-  return data || [];
-};
-
 // Directors
 export const getUniqueDirectors = async (): Promise<string[]> => {
   const { data: { user } } = await supabase.auth.getUser();
@@ -123,6 +112,17 @@ export const getUniqueDirectors = async (): Promise<string[]> => {
   // Extract unique director names and sort alphabetically
   const uniqueDirectors = [...new Set(data?.map(item => item.director_name).filter(Boolean) || [])];
   return uniqueDirectors.sort();
+};
+
+// Categories
+export const getCategories = async (): Promise<Category[]> => {
+  const { data, error } = await supabase
+    .from('categories')
+    .select('*')
+    .order('name');
+  
+  if (error) throw error;
+  return data || [];
 };
 
 // Suppliers
@@ -221,9 +221,10 @@ export const findOrCreateASIN = async (asinData: Partial<ASIN>): Promise<ASIN> =
 };
 
 export const getASINsWithMetrics = async (): Promise<ASINWithMetrics[]> => {
-  const [asins, transactionItems] = await Promise.all([
+  const [asins, transactionItems, transactions] = await Promise.all([
     getASINs(), // This now only returns Stock category ASINs
-    getTransactionItems()
+    getTransactionItems(),
+    getTransactions()
   ]);
 
   return asins.map(asin => {
@@ -236,18 +237,38 @@ export const getASINsWithMetrics = async (): Promise<ASINWithMetrics[]> => {
     // Calculate average buy price (COG)
     const averageBuyPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0;
     
-    // Calculate adjusted quantity based on pack size
-    const adjustedQuantity = asin.pack > 1 ? Math.floor(totalQuantity / asin.pack) : totalQuantity;
+    // Get transactions for this ASIN to calculate completed quantities
+    const asinTransactionIds = asinItems.map(item => item.transaction_id);
+    const asinTransactions = transactions.filter(t => asinTransactionIds.includes(t.id));
+    
+    // Calculate completed quantity (from transactions marked as complete)
+    const completedTransactionIds = asinTransactions
+      .filter(t => ['fully received', 'collected', 'complete'].includes(t.status.toLowerCase()))
+      .map(t => t.id);
+    
+    const completedItems = asinItems.filter(item => completedTransactionIds.includes(item.transaction_id));
+    const completedQuantity = completedItems.reduce((sum, item) => sum + item.quantity, 0);
+    
+    // Calculate adjusted quantity based on pack size (only for completed items)
+    const adjustedQuantity = asin.pack > 1 ? Math.floor(completedQuantity / asin.pack) : completedQuantity;
     
     // Calculate stored (total quantity minus shipped)
     const stored = adjustedQuantity - asin.shipped;
 
+    // Calculate average profit per unit (same as ASINs page)
+    const totalRevenue = asinItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
+    const totalFees = asinItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalVATOnFees = totalFees * 0.2; // 20% VAT on fees
+    const totalFeesWithVAT = totalFees + totalVATOnFees;
+    const totalProfit = totalRevenue - totalCost - totalFeesWithVAT;
+    const averageProfit = totalQuantity > 0 ? totalProfit / totalQuantity : 0;
     return {
       ...asin,
       averageBuyPrice,
       totalQuantity,
       adjustedQuantity,
-      stored
+      stored,
+      averageProfit
     };
   });
 };
@@ -256,14 +277,67 @@ export const createASIN = async (asin: Omit<ASIN, 'id' | 'user_id' | 'created_at
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
-  const { data, error } = await supabase
+  // Check if ASIN already exists for this user
+  const { data: existingASIN, error: checkError } = await supabase
     .from('asins')
-    .insert({ ...asin, user_id: user.id })
-    .select()
+    .select('*')
+    .eq('asin', asin.asin)
+    .eq('user_id', user.id)
     .single();
-  
-  if (error) throw error;
-  return data;
+
+  if (checkError && checkError.code !== 'PGRST116') {
+    // PGRST116 is "not found" error, which is expected for new ASINs
+    throw checkError;
+  }
+
+  if (existingASIN) {
+    // ASIN exists - update title and image_url if provided and current values are empty/default
+    const updates: Partial<ASIN> = {};
+    
+    // Update title if provided and current title is empty or default
+    if (asin.title && asin.title.trim() !== '' && 
+        (!existingASIN.title || existingASIN.title.trim() === '' || existingASIN.title === 'No title')) {
+      updates.title = asin.title;
+    }
+    
+    // Update image_url if provided and current image_url is empty or default
+    if (asin.image_url && asin.image_url.trim() !== '' && 
+        (!existingASIN.image_url || existingASIN.image_url.trim() === '' || existingASIN.image_url === 'No image')) {
+      updates.image_url = asin.image_url;
+    }
+
+    // Update brand if provided and current brand is empty or default
+    if (asin.brand && asin.brand.trim() !== '' && 
+        (!existingASIN.brand || existingASIN.brand.trim() === '' || existingASIN.brand === 'No brand')) {
+      updates.brand = asin.brand;
+    }
+
+    // If there are updates to make, update the existing ASIN
+    if (Object.keys(updates).length > 0) {
+      const { data: updatedData, error: updateError } = await supabase
+        .from('asins')
+        .update(updates)
+        .eq('id', existingASIN.id)
+        .select()
+        .single();
+      
+      if (updateError) throw updateError;
+      return updatedData;
+    }
+    
+    // No updates needed, return existing ASIN
+    return existingASIN;
+  } else {
+    // ASIN doesn't exist - create new one
+    const { data, error } = await supabase
+      .from('asins')
+      .insert({ ...asin, user_id: user.id })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  }
 };
 
 export const updateASIN = async (id: string, updates: Partial<ASIN>): Promise<ASIN> => {
@@ -278,6 +352,29 @@ export const updateASIN = async (id: string, updates: Partial<ASIN>): Promise<AS
   return data;
 };
 
+// Get all ASINs including Other category
+export const getAllASINs = async (): Promise<ASIN[]> => {
+  const { data, error } = await supabase
+    .from('asins')
+    .select('*')
+    .order('created_at', { ascending: false });
+  
+  if (error) throw error;
+  return data || [];
+};
+
+// Get ASINs by category
+export const getASINsByCategory = async (category: string): Promise<ASIN[]> => {
+  const { data, error } = await supabase
+    .from('asins')
+    .select('*')
+    .eq('category', category)
+    .order('created_at', { ascending: false });
+  
+  if (error) throw error;
+  return data || [];
+};
+
 export const deleteASIN = async (id: string): Promise<void> => {
   const { error } = await supabase
     .from('asins')
@@ -285,6 +382,59 @@ export const deleteASIN = async (id: string): Promise<void> => {
     .eq('id', id);
   
   if (error) throw error;
+};
+
+// ASIN Pricing History
+export const createASINPricingHistory = async (pricingData: {
+  asin: string;
+  buy_price: number; 
+  sell_price: number; 
+  est_fees: number; 
+}): Promise<void> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
+  // Ensure all values are valid numbers
+  const sanitizedData = {
+    asin: pricingData.asin,
+    buy_price: isNaN(pricingData.buy_price) ? 0 : pricingData.buy_price,
+    sell_price: isNaN(pricingData.sell_price) ? 0 : pricingData.sell_price,
+    est_fees: isNaN(pricingData.est_fees) ? 0 : pricingData.est_fees,
+    user_id: user.id
+  };
+
+  const { error } = await supabase
+    .from('asin_pricing_history')
+    .insert(sanitizedData);
+  
+  if (error) throw error;
+};
+
+export const getLatestASINPricing = async (asin: string): Promise<{
+  buy_price: number;
+  sell_price: number;
+  est_fees: number; 
+} | null> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
+  console.log('Fetching pricing history for ASIN:', asin);
+
+  const { data, error } = await supabase
+    .from('asin_pricing_history')
+    .select('buy_price, sell_price, est_fees')
+    .eq('asin', asin)
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  
+  if (error) {
+    console.error('Error fetching ASIN pricing history:', error);
+    throw error;
+  }
+  
+  console.log('Found pricing history:', data);
+  return data?.[0] || null;
 };
 
 // Transactions
@@ -312,7 +462,9 @@ export const getTransactionsWithMetrics = async (): Promise<TransactionWithMetri
     
     // Calculate total cost including fees AND shipping
     const itemsCostOfGoods = items.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
-    const totalFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalEstFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalVATOnFees = totalEstFees * 0.2; // 20% VAT on fees
+    const totalFees = totalEstFees + totalVATOnFees;
     const totalCost = itemsCostOfGoods + transaction.shipping_cost; // This is COG + Shipping
     const totalRevenue = items.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
     const estimatedProfit = totalRevenue - totalCost - totalFees; // Revenue - (COG + Shipping) - Fees
@@ -348,7 +500,9 @@ export const getTransactionsByASIN = async (asinCode: string): Promise<Transacti
     
     // Calculate total cost including fees AND shipping
     const itemsCostOfGoods = items.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
-    const totalFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalEstFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const totalVATOnFees = totalEstFees * 0.2; // 20% VAT on fees
+    const totalFees = totalEstFees + totalVATOnFees;
     const totalCost = itemsCostOfGoods + transaction.shipping_cost; // This is COG + Shipping
     const totalRevenue = items.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
     const estimatedProfit = totalRevenue - totalCost - totalFees; // Revenue - (COG + Shipping) - Fees
@@ -439,11 +593,17 @@ export const createGeneralLedgerTransaction = async (transaction: Omit<GeneralLe
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
-  // Auto-generate reference if not provided or if it's not a Director's loan with custom reference
+  // Prepare transaction data
   let transactionData = { ...transaction };
-  if (!transactionData.reference || 
-      (transactionData.reference.trim() === '' && transactionData.category !== 'Director\'s loans') ||
-      (!transactionData.reference.startsWith('Director\'s') && transactionData.category !== 'Director\'s loans')) {
+
+  // Only auto-generate reference if:
+  // 1. No reference is provided, OR
+  // 2. Reference is empty, OR  
+  // 3. Reference doesn't start with "Director's" (for Director's loans) AND category is not Director's loans
+  const shouldAutoGenerate = (!transactionData.reference || transactionData.reference.trim() === '') && 
+                            transactionData.category !== 'Director\'s loans';
+
+  if (shouldAutoGenerate) {
     transactionData.reference = await generateNextGeneralLedgerNumber();
   }
 
@@ -537,6 +697,14 @@ export const createTransactionItem = async (item: Omit<TransactionItem, 'id' | '
     .select()
     .single();
   
+  // Store pricing history for this ASIN
+  await createASINPricingHistory({
+    asin: item.asin,
+    buy_price: Number(item.buy_price),
+    sell_price: Number(item.sell_price),
+    est_fees: Number(item.est_fees || 0)
+  });
+  
   if (error) throw error;
   return data;
 };
@@ -550,6 +718,17 @@ export const updateTransactionItem = async (id: string, updates: Partial<Transac
     .single();
   
   if (error) throw error;
+
+  // Store pricing history for this ASIN if relevant fields are updated
+  if (updates.asin && updates.buy_price !== undefined && updates.sell_price !== undefined && updates.est_fees !== undefined) {
+    await createASINPricingHistory({
+      asin: updates.asin,
+      buy_price: Number(updates.buy_price),
+      sell_price: Number(updates.sell_price),
+      est_fees: Number(updates.est_fees)
+    });
+  }
+
   return data;
 };
 
@@ -561,6 +740,7 @@ export const deleteTransactionItem = async (id: string): Promise<void> => {
   
   if (error) throw error;
 };
+
 
 // Budgets
 export const getBudgets = async (): Promise<Budget[]> => {
@@ -696,8 +876,10 @@ export const getDashboardMetrics = async (): Promise<DashboardMetrics> => {
   const totalRevenue = transactionItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
   const totalCostOfGoods = transactionItems.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
   const totalShippingCost = transactions.reduce((sum, transaction) => sum + transaction.shipping_cost, 0);
-  const totalFees = transactionItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
-  const totalExpenses = totalCostOfGoods + totalShippingCost + totalFees; // Total expenses including COG, Shipping, and Fees
+  const totalEstFees = transactionItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+  const totalVATOnFees = totalEstFees * 0.2; // 20% VAT on fees
+  const totalFeesWithVAT = totalEstFees + totalVATOnFees;
+  const totalExpenses = totalCostOfGoods + totalShippingCost + totalFeesWithVAT; // Total expenses including COG, Shipping, and Fees with VAT
   const totalEstimatedProfit = totalRevenue - totalExpenses; // Revenue - Total Expenses
   const averageROI = totalCostOfGoods > 0 ? (totalEstimatedProfit / totalCostOfGoods) * 100 : 0; // ROI based on total COG
 
@@ -763,7 +945,9 @@ export const getSupplierMetrics = async (): Promise<SupplierMetrics[]> => {
     // Calculate estimated profit for this supplier including shipping costs
     const supplierItemsCostOfGoods = supplierItems.reduce((sum, item) => sum + (item.buy_price * item.quantity), 0);
     const supplierShippingCost = supplierTransactions.reduce((sum, t) => sum + t.shipping_cost, 0);
-    const supplierFees = supplierItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const supplierEstFees = supplierItems.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+    const supplierVATOnFees = supplierEstFees * 0.2; // 20% VAT on fees
+    const supplierFees = supplierEstFees + supplierVATOnFees;
     const supplierTotalExpenses = supplierItemsCostOfGoods + supplierShippingCost + supplierFees;
     const totalRevenue = supplierItems.reduce((sum, item) => sum + (item.sell_price * item.quantity), 0);
     const estimatedProfit = totalRevenue - supplierTotalExpenses;

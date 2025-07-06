@@ -418,7 +418,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
 
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
   const totalCost = items.reduce((sum, item) => sum + item.totalCost, 0) + formData.shipping_cost;
-  const totalProfit = items.reduce((sum, item) => sum + item.estimatedProfit, 0);
+  const totalEstFees = items.reduce((sum, item) => sum + ((item.est_fees || 0) * item.quantity), 0);
+  const totalVATOnFees = totalEstFees * 0.2; // 20% VAT on fees
+  const totalProfit = items.reduce((sum, item) => sum + item.estimatedProfit, 0) - totalVATOnFees;
   const totalROI = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
 
   if (!isOpen) return null;
@@ -767,20 +769,24 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                             <div className="text-red-400 text-xs">Est. Fees</div>
                             <div className="text-white font-medium">{formatCurrency(item.est_fees || 0)}</div>
                           </div>
+                          <div className="bg-red-900/30 rounded-lg px-3 py-2 text-center">
+                            <div className="text-red-400 text-xs">VAT (20%)</div>
+                            <div className="text-white font-medium">{formatCurrency(((item.est_fees || 0) * 0.2))}</div>
+                          </div>
                           <div className="bg-purple-900/30 rounded-lg px-3 py-2 text-center">
                             <div className="text-purple-400 text-xs">Total Cost</div>
                             <div className="text-white font-medium">{formatCurrency(item.totalCost)}</div>
                           </div>
                           <div className={`rounded-lg px-3 py-2 text-center ${totalProfit >=0 ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
                             <div className={`text-xs ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>Est. Profit</div>
-                            <div className={`font-medium ${item.estimatedProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              {formatCurrency(item.estimatedProfit)}
+                            <div className={`font-medium ${(item.estimatedProfit - ((item.est_fees || 0) * item.quantity * 0.2)) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatCurrency(item.estimatedProfit - ((item.est_fees || 0) * item.quantity * 0.2))}
                             </div>
                           </div>
                           <div className={`rounded-lg px-3 py-2 text-center ${totalProfit >=0 ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
                             <div className={`text-xs ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>ROI%</div>
-                            <div className={`font-medium ${item.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              {item.roi.toFixed(1)}%
+                            <div className={`font-medium ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {((item.estimatedProfit - ((item.est_fees || 0) * item.quantity * 0.2)) / item.totalCost * 100).toFixed(1)}%
                             </div>
                           </div>
                         </div>
@@ -811,7 +817,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
             </div>
 
             {/* Transaction Summary - Always show for purchase orders */}
-            <div className="mb-3">
+            <div className="mb-6">
               <h3 className="text-lg font-semibold text-white mb-4">Purchase Order Summary</h3>
               <div className="grid grid-cols-4 gap-4">
                 <div className="bg-blue-900/30 backdrop-blur-sm border border-blue-600/30 rounded-xl p-4 text-center">
@@ -826,7 +832,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                   <p className={`text-2xl font-bold ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {formatCurrency(totalProfit)}
                   </p>
-                  <p className={`text-sm ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>Estimated Profit</p>
+                  <p className={`text-sm ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>Est. Profit (inc. VAT)</p>
                 </div>
                 <div className={`backdrop-blur-sm border rounded-xl p-4 text-center ${totalProfit >=0 ? 'bg-green-900/30 border-green-600/30' : 'bg-red-900/30 border-red-600/30'}`}>
                   <p className={`text-2xl font-bold ${totalROI >= 0 ? 'text-green-400' : 'text-red-400'}`}>

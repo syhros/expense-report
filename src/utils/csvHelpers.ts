@@ -1,6 +1,6 @@
 // CSV helper functions for ASIN management
 export const generateASINTemplate = (): string => {
-  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category'];
+  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category', 'buy_price', 'sell_price', 'est_fee'];
   return headers.join(',') + '\n';
 };
 
@@ -45,7 +45,8 @@ export const parseCSVLine = (line: string): string[] => {
 export const validateASINData = (data: any): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   
-  if (!data.asin || data.asin.trim() === '') {
+  // Required fields validation
+  if (!data.asin || data.asin.trim() === '') { 
     errors.push('ASIN is required');
   }
   
@@ -63,6 +64,19 @@ export const validateASINData = (data: any): { isValid: boolean; errors: string[
 
   if (data.category && !['Stock', 'Other'].includes(data.category)) {
     errors.push('Category must be either "Stock" or "Other"');
+  }
+
+  // Optional pricing fields validation
+  if (data.buy_price && isNaN(parseFloat(data.buy_price))) {
+    errors.push('Buy price must be a valid number');
+  }
+  
+  if (data.sell_price && isNaN(parseFloat(data.sell_price))) {
+    errors.push('Sell price must be a valid number');
+  }
+  
+  if (data.est_fee && isNaN(parseFloat(data.est_fee))) {
+    errors.push('Estimated fee must be a valid number');
   }
   
   return {
@@ -87,12 +101,15 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
   // Define expected headers with their normalized versions for matching
   const expectedHeaders = [
     { name: 'asin', variations: ['asin'] },
-    { name: 'image url', variations: ['image url', 'imageurl', 'image_url'] },
+    { name: 'image url', variations: ['image url', 'imageurl', 'image_url', 'image'] },
     { name: 'title', variations: ['title'] },
     { name: 'type', variations: ['type'] },
     { name: 'size', variations: ['size'] },
     { name: 'brand', variations: ['brand'] },
-    { name: 'category', variations: ['category'] }
+    { name: 'category', variations: ['category'] },
+    { name: 'buy_price', variations: ['buy_price', 'buy price', 'cost', 'cog', 'purchase price', 'purchase_price'] },
+    { name: 'sell_price', variations: ['sell_price', 'sell price', 'selling price', 'selling_price', 'price'] },
+    { name: 'est_fee', variations: ['est_fee', 'est fee', 'estimated fee', 'estimated_fee', 'fee', 'fees', 'amazon fee'] }
   ];
   
   // Find column indices using improved matching
@@ -131,7 +148,17 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
       errors.push(`Row ${i + 1}: Insufficient columns`);
       continue;
     }
+
+    // Parse numeric values safely
+    const buyPrice = columnIndices.buy_price !== undefined ? 
+      parseFloat(values[columnIndices.buy_price]?.replace(/"/g, '').trim() || '0') : 0;
     
+    const sellPrice = columnIndices.sell_price !== undefined ? 
+      parseFloat(values[columnIndices.sell_price]?.replace(/"/g, '').trim() || '0') : 0;
+    
+    const estFee = columnIndices.est_fee !== undefined ? 
+      parseFloat(values[columnIndices.est_fee]?.replace(/"/g, '').trim() || '0') : 0;
+
     const rowData = {
       asin: values[columnIndices.asin]?.replace(/"/g, '').trim() || '',
       image_url: values[columnIndices.image_url]?.replace(/"/g, '').trim() || '',
@@ -139,7 +166,11 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
       type: values[columnIndices.type]?.replace(/"/g, '').trim() || 'Single',
       pack: parseInt(values[columnIndices.size]?.replace(/"/g, '').trim()) || 1,
       brand: values[columnIndices.brand]?.replace(/"/g, '').trim() || '',
-      category: values[columnIndices.category]?.replace(/"/g, '').trim() || 'Stock'
+      category: values[columnIndices.category]?.replace(/"/g, '').trim() || 'Stock',
+      buy_price: isNaN(buyPrice) ? 0 : buyPrice,
+      sell_price: isNaN(sellPrice) ? 0 : sellPrice,
+      est_fee: isNaN(estFee) ? 0 : estFee,
+      has_pricing: (buyPrice > 0 || sellPrice > 0 || estFee > 0)
     };
     
     const validation = validateASINData(rowData);

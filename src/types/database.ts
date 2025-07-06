@@ -14,9 +14,9 @@ export interface Supplier {
 export interface ASIN {
   id: string;
   asin: string;
-  title: string;
-  brand: string;
-  image_url: string;
+  title: string | null;
+  brand: string | null;
+  image_url: string | null;
   type: string;
   pack: number;
   shipped: number;
@@ -126,8 +126,12 @@ export interface SupplierMetrics {
 // Extended interfaces for calculated fields
 export interface ASINWithMetrics extends ASIN {
   averageBuyPrice: number;
+  averageFees?: number;
+  averageSellPrice?: number;
+  averageProfit: number;
   totalQuantity: number;
   adjustedQuantity: number;
+  orderedQuantity?: number;
   stored: number;
 }
 
@@ -135,6 +139,7 @@ export interface TransactionWithMetrics extends Transaction {
   totalCost: number;
   estimatedProfit: number;
   roi: number;
+  items?: TransactionItemDisplay[];
 }
 
 export interface TransactionItemDisplay extends TransactionItem {

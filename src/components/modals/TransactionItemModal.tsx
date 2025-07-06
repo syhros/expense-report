@@ -4,6 +4,7 @@ import { getASINByCode, findOrCreateASIN, updateASIN } from '../../services/data
 import { useASINs } from '../../hooks/useData';
 import { ASIN, TransactionItemDisplay, Supplier } from '../../types/database';
 import { formatCurrency } from '../../utils/formatters';
+import { getLatestASINPricing } from '../../services/database';
 
 interface TransactionItemModalProps {
   isOpen: boolean;
@@ -68,6 +69,8 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
   useEffect(() => {
     if (formData.asin && formData.asin.length >= 10) {
       fetchASINDetails(formData.asin);
+      // Load historical pricing data
+      loadHistoricalPricing(formData.asin);
     } else {
       setAsinDetails(null);
       setIsIncomplete(false);
@@ -85,6 +88,23 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
       setFilteredAsins([]);
     }
   }, [formData.title, asins]);
+
+  const loadHistoricalPricing = async (asinCode: string) => {
+    try {
+      const pricing = await getLatestASINPricing(asinCode);
+      console.log('Loaded historical pricing:', pricing);
+      if (pricing) {
+        setFormData(prev => ({
+          ...prev,
+          buy_price: pricing.buy_price,
+          sell_price: pricing.sell_price,
+          est_fees: pricing.est_fees
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to load historical pricing:', err);
+    }
+  };
 
   const fetchASINDetails = async (asinCode: string) => {
     try {
@@ -117,7 +137,7 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
+    setError(null); 
 
     try {
       let finalAsinDetails = asinDetails;
@@ -143,7 +163,10 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
       // Calculate total cost and profit
       const itemCost = formData.buy_price * formData.quantity;
       const totalRevenue = formData.sell_price * formData.quantity;
-      const estimatedProfit = totalRevenue - itemCost - (formData.est_fees * formData.quantity);
+      const totalFees = formData.est_fees * formData.quantity;
+      const vatOnFees = totalFees * 0.2; // 20% VAT on fees
+      const totalFeesWithVAT = totalFees + vatOnFees;
+      const estimatedProfit = totalRevenue - itemCost - totalFeesWithVAT;
       const roi = itemCost > 0 ? (estimatedProfit / itemCost) * 100 : 0;
 
       // Calculate display quantity (adjusted for bundles)
@@ -154,9 +177,9 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
       const itemData = {
         asin: formData.asin,
         quantity: formData.quantity,
-        buy_price: formData.buy_price,
-        sell_price: formData.sell_price,
-        est_fees: formData.est_fees,
+        buy_price: Number(formData.buy_price),
+        sell_price: Number(formData.sell_price),
+        est_fees: Number(formData.est_fees),
         asin_details: finalAsinDetails,
         totalCost: itemCost,
         estimatedProfit,
@@ -176,18 +199,18 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    // Handle numeric inputs with proper parsing and allow empty values
+    // Handle numeric inputs with proper parsing
     if (name === 'quantity') {
-      const numValue = value === '' ? '' : parseInt(value, 10);
+      const numValue = value === '' ? 1 : parseInt(value, 10);
       setFormData(prev => ({ 
         ...prev, 
-        [name]: numValue === '' || isNaN(numValue as number) ? 1 : numValue
+        [name]: isNaN(numValue) ? 1 : Math.max(1, numValue)
       }));
     } else if (name === 'buy_price' || name === 'sell_price' || name === 'est_fees') {
-      const numValue = value === '' ? '' : parseFloat(value);
+      const numValue = parseFloat(value);
       setFormData(prev => ({ 
         ...prev, 
-        [name]: numValue === '' || isNaN(numValue as number) ? 0 : numValue
+        [name]: isNaN(numValue) ? 0 : Math.max(0, numValue)
       }));
     } else {
       setFormData(prev => ({ 
@@ -207,6 +230,8 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
     setAsinDetails(selectedAsin);
     setShowTitleDropdown(false);
     setIsIncomplete(false);
+    // Load historical pricing for selected ASIN
+    loadHistoricalPricing(selectedAsin.asin);
   };
 
   if (!isOpen) return null;
@@ -410,6 +435,36 @@ const TransactionItemModal: React.FC<TransactionItemModalProps> = ({
                 >
                   Est. Fees
                 </label>
+              </div>
+              {/* VAT Display */}
+              <div className="mt-1 text-xs text-gray-400">
+                VAT (20%): {formatCurrency((formData.est_fees || 0) * 0.2)}
+              </div>
+            </div>
+
+            <div className="relative">
+              <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
+                <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                  <span className="text-blue-400">£</span>
+                </div>
+                <input
+                  type="number"
+                  name="fees_vat"
+                  value={((formData.est_fees || 0) * 0.2).toFixed(2)}
+                  readOnly
+                  className="w-full pl-8 pr-4 py-4 bg-transparent text-gray-400 placeholder-transparent focus:outline-none cursor-not-allowed"
+                  placeholder="Fees VAT"
+                />
+                <label
+                  htmlFor="fees_vat"
+                  className="absolute left-6 -top-2.5 bg-gray-800 px-2 text-sm font-medium text-blue-400"
+                >
+                  Fees VAT (20%)
+                </label>
+              </div>
+              {/* Total Fees Display */}
+              <div className="mt-1 text-xs text-gray-400">
+                Total Fees: {formatCurrency((formData.est_fees || 0) + ((formData.est_fees || 0) * 0.2))}
               </div>
             </div>
 
