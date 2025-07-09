@@ -1,6 +1,6 @@
 // CSV helper functions for ASIN management
 const generateASINTemplate = (): string => {
-  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category', 'buy_price', 'sell_price', 'est_fee', 'weight'];
+  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category', 'buy_price', 'sell_price', 'est_fee', 'weight', 'weight_unit', 'fnsku'];
   return headers.join(',') + '\n';
 };
 
@@ -115,7 +115,9 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
     { name: 'buy_price', variations: ['buy_price', 'buy price', 'cost', 'cog', 'purchase price', 'purchase_price'] },
     { name: 'sell_price', variations: ['sell_price', 'sell price', 'selling price', 'selling_price', 'price'] },
     { name: 'est_fee', variations: ['est_fee', 'est fee', 'estimated fee', 'estimated_fee', 'fee', 'fees', 'amazon fee'] },
-    { name: 'weight', variations: ['weight', 'weight_g', 'weight_kg', 'product weight'] }
+    { name: 'weight', variations: ['weight', 'weight_g', 'product weight'] },
+    { name: 'weight_unit', variations: ['weight_unit', 'weight unit', 'unit'] },
+    { name: 'fnsku', variations: ['fnsku', 'fulfillment network sku'] }
   ];
   
   // Find column indices using improved matching
@@ -168,8 +170,13 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
     const weight = columnIndices.weight !== undefined ? 
       parseFloat(values[columnIndices.weight]?.replace(/"/g, '').trim() || '0') : 0;
       
+    // Get weight unit with default to 'g'
+    const weight_unit = columnIndices.weight_unit !== undefined ?
+      values[columnIndices.weight_unit]?.replace(/"/g, '').trim() || 'g' : 'g';
+      
+    // Get FNSKU if available
     const fnsku = columnIndices.fnsku !== undefined ?
-      values[columnIndices.fnsku]?.replace(/"/g, '').trim() || '' : '';
+      values[columnIndices.fnsku]?.replace(/"/g, '').trim() || null : null;
       
     const rowData = {
       asin: values[columnIndices.asin]?.replace(/"/g, '').trim() || '',
@@ -183,7 +190,7 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
       sell_price: isNaN(sellPrice) ? 0 : sellPrice,
       est_fee: isNaN(estFee) ? 0 : estFee,
       weight: isNaN(weight) ? 0 : weight,
-      weight_unit: 'g', // Default to grams for CSV imports
+      weight_unit: weight_unit,
       fnsku: fnsku,
       has_pricing: (buyPrice > 0 || sellPrice > 0 || estFee > 0)
     };
@@ -198,4 +205,78 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
   }
   
   return { data, errors };
+};
+
+// Export the supabase client for use in importASINsWithUpdate
+import { supabase } from '../lib/supabase';
+
+// Function to handle ASIN import with update for duplicates
+export const importASINsWithUpdate = async (asins: any[]): Promise<{ imported: number; skipped: number; updated: number; errors: string[] }> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
+  let imported = 0;
+  let skipped = 0;
+  let updated = 0;
+  const errors: string[] = [];
+
+  // Import the findOrCreateASIN function
+  const { findOrCreateASIN } = await import('../services/database');
+
+  for (const asin of asins) {
+    try {
+      // Validate ASIN data
+      const validation = validateASINData(asin);
+      if (!validation.isValid) {
+        errors.push(`ASIN ${asin.asin}: ${validation.errors.join(', ')}`);
+        skipped++;
+        continue;
+      }
+
+      // Prepare ASIN data
+      const asinData = {
+        asin: asin.asin,
+        title: asin.title || '',
+        brand: asin.brand || '',
+        image_url: asin.image_url || '',
+        type: asin.type || 'Single',
+        pack: asin.pack || 1,
+        category: asin.category || 'Stock',
+        weight: asin.weight || 0,
+        weight_unit: asin.weight_unit || 'g',
+        fnsku: asin.fnsku || null
+      };
+
+      // Use findOrCreateASIN which will update existing ASINs with new data
+      const result = await findOrCreateASIN(asinData);
+      
+      // If the ASIN was created or updated, also create pricing history if provided
+      if (asin.has_pricing && (asin.buy_price > 0 || asin.sell_price > 0 || asin.est_fee > 0)) {
+        try {
+          const { createASINPricingHistory } = await import('../services/database');
+          await createASINPricingHistory({
+            asin: asin.asin,
+            buy_price: asin.buy_price || 0,
+            sell_price: asin.sell_price || 0,
+            est_fees: asin.est_fee || 0
+          });
+        } catch (pricingError) {
+          console.error(`Failed to create pricing history for ${asin.asin}:`, pricingError);
+        }
+      }
+
+      // Determine if this was an update or a new import
+      if (result.id === asinData.id) {
+        updated++;
+      } else {
+        imported++;
+      }
+    } catch (err) {
+      console.error(`Error importing ASIN ${asin.asin}:`, err);
+      errors.push(`ASIN ${asin.asin}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      skipped++;
+    }
+  }
+
+  return { imported, skipped, updated, errors };
 };

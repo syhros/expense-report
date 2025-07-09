@@ -8,7 +8,7 @@ import { updateASIN, deleteASIN, getTransactionsByASIN, createASIN, getAllASINs,
 import { getTransactionItems, getTransactions } from '../services/database';
 import { formatCurrency, truncateText, formatDate } from '../utils/formatters';
 import { TransactionWithMetrics } from '../types/database';
-import { downloadCSVTemplate, parseASINCSV } from '../utils/csvHelpers';
+import { parseASINCSV, downloadCSVTemplate, importASINsWithUpdate } from '../utils/csvHelpers';
 import { downloadASINExport } from '../utils/asinHelpers';
 import { ASINWithMetrics } from '../types/database';
 
@@ -167,6 +167,38 @@ const ASINs: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    try {
+      setImporting(true);
+      setImportError(null);
+      
+      // Use the new import function that handles updates
+      const result = await importASINsWithUpdate(importData);
+      
+      setImportResult({
+        success: true,
+        message: `Import Successful`,
+        details: `Successfully imported ${result.imported} ASINs and updated ${result.updated} existing ASINs. ${result.skipped} skipped due to errors.`
+      });
+      
+      // Refresh ASINs list
+      refetchASINs();
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Import failed');
+      setImportResult({
+        success: false,
+        message: 'Import Failed',
+        details: error instanceof Error ? error.message : 'Unknown error occurred during import'
+      });
+    } finally {
+      setImporting(false);
+      setShowImportModal(false);
+    }
+  };
+
+  // Legacy import function (kept for reference)
+  const handleLegacyImportSubmit = async () => {
+    if (!importData) return;
+    
     setImporting(true);
     setImportError(null);
     setImportSuccess(null);
