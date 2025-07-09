@@ -29,7 +29,13 @@ const parseCSVLine = (line: string): string[] => {
     const char = line[i];
     
     if (char === '"') {
-      inQuotes = !inQuotes;
+      // Handle escaped quotes (two double quotes in a row)
+      if (i < line.length - 1 && line[i + 1] === '"' && inQuotes) {
+        current += '"';
+        i++; // Skip the next quote
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === ',' && !inQuotes) {
       result.push(current.trim());
       current = '';
@@ -94,6 +100,8 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
   const lines = csvContent.split('\n').filter(line => line.trim());
   const errors: string[] = [];
   const data: any[] = [];
+
+  console.log('CSV lines:', lines.length);
   
   if (lines.length < 2) {
     errors.push('CSV file must contain at least a header row and one data row');
@@ -101,7 +109,10 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
   }
   
   // Parse headers and normalize them for comparison
-  const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
+  const headerLine = lines[0];
+  console.log('Header line:', headerLine);
+  const headers = parseCSVLine(headerLine).map(h => h.replace(/"/g, '').toLowerCase().trim());
+  console.log('Parsed headers:', headers);
   
   // Define expected headers with their normalized versions for matching
   const expectedHeaders = [
@@ -151,6 +162,7 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
   // Process data rows
   for (let i = 1; i < lines.length; i++) {
     const values = parseCSVLine(lines[i]);
+    console.log(`Row ${i} values:`, values);
     
     if (values.length < Math.max(...Object.values(columnIndices)) + 1) {
       errors.push(`Row ${i + 1}: Insufficient columns`);
@@ -196,6 +208,7 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
     };
     
     const validation = validateASINData(rowData);
+    console.log(`Row ${i} validation:`, validation);
     if (!validation.isValid) {
       errors.push(`Row ${i + 1}: ${validation.errors.join(', ')}`);
       continue;
@@ -214,6 +227,8 @@ import { supabase } from '../lib/supabase';
 export const importASINsWithUpdate = async (asins: any[]): Promise<{ imported: number; skipped: number; updated: number; errors: string[] }> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
+  
+  console.log('Importing ASINs:', asins.length);
 
   let imported = 0;
   let skipped = 0;
@@ -226,12 +241,15 @@ export const importASINsWithUpdate = async (asins: any[]): Promise<{ imported: n
   for (const asin of asins) {
     try {
       // Validate ASIN data
+      console.log('Processing ASIN:', asin.asin);
       const validation = validateASINData(asin);
       if (!validation.isValid) {
         errors.push(`ASIN ${asin.asin}: ${validation.errors.join(', ')}`);
         skipped++;
         continue;
       }
+
+      console.log('ASIN data valid, proceeding with import');
 
       // Prepare ASIN data
       const asinData = {
@@ -248,6 +266,7 @@ export const importASINsWithUpdate = async (asins: any[]): Promise<{ imported: n
       };
 
       // Use findOrCreateASIN which will update existing ASINs with new data
+      console.log('Finding or creating ASIN:', asin.asin);
       const result = await findOrCreateASIN(asinData);
       
       // If the ASIN was created or updated, also create pricing history if provided
@@ -266,10 +285,12 @@ export const importASINsWithUpdate = async (asins: any[]): Promise<{ imported: n
       }
 
       // Determine if this was an update or a new import
-      if (result.id === asinData.id) {
+      if (result.asin === asinData.asin && result.id !== undefined) {
         updated++;
+        console.log('Updated existing ASIN:', asin.asin);
       } else {
         imported++;
+        console.log('Imported new ASIN:', asin.asin);
       }
     } catch (err) {
       console.error(`Error importing ASIN ${asin.asin}:`, err);

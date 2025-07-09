@@ -9,7 +9,7 @@ import { getTransactionItems, getTransactions } from '../services/database';
 import { formatCurrency, truncateText, formatDate } from '../utils/formatters';
 import { TransactionWithMetrics } from '../types/database';
 import { parseASINCSV, downloadCSVTemplate, importASINsWithUpdate } from '../utils/csvHelpers';
-import { downloadASINExport } from '../utils/asinHelpers';
+import { downloadASINExport, generateASINExportCSVWithPricing } from '../utils/asinHelpers';
 import { ASINWithMetrics } from '../types/database';
 
 const ASINs: React.FC = () => {
@@ -30,6 +30,7 @@ const ASINs: React.FC = () => {
   
   // Import states
   const [importing, setImporting] = useState(false);
+  const [importData, setImportData] = useState<any[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -167,31 +168,75 @@ const ASINs: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setImporting(true);
+    setImportError(null);
+    setImportSuccess(null);
+    
     try {
-      setImporting(true);
-      setImportError(null);
+      const reader = new FileReader();
       
+      reader.onload = async (event) => {
+        try {
+          const csvContent = event.target?.result as string;
+          console.log('CSV content length:', csvContent.length);
+          const { data, errors } = parseASINCSV(csvContent);
+          console.log('Parsed data:', data.length, 'items');
+          
+          if (errors.length > 0) {
+            setImportError(`CSV parsing errors: ${errors.join(', ')}`);
+            setImporting(false);
+            return;
+          }
+          
+          if (data.length === 0) {
+            setImportError('No valid data found in the CSV file. Please check the format and try again.');
+            setImporting(false);
+            return;
+          }
+          
+          setImportData(data);
+          
+          // Now that we have the data, we can proceed with the import
+          await handleImportSubmit(data);
+        } catch (error) {
+          setImportError(error instanceof Error ? error.message : 'Failed to parse CSV');
+          setImporting(false);
+        }
+      };
+      
+      reader.onerror = () => {
+        setImportError('Failed to read file');
+        setImporting(false);
+      };
+      
+      reader.readAsText(file);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Failed to process file');
+      setImporting(false);
+    }
+  };
+
+  const handleImportSubmit = async (dataToImport?: any[]) => {
+    const dataArray = dataToImport || importData;
+    
+    if (!dataArray || dataArray.length === 0) {
+      setImportError('No data to import');
+      setImporting(false);
+      return;
+    }
+    
+    try {
       // Use the new import function that handles updates
-      const result = await importASINsWithUpdate(importData);
+      const result = await importASINsWithUpdate(dataArray);
       
-      setImportResult({
-        success: true,
-        message: `Import Successful`,
-        details: `Successfully imported ${result.imported} ASINs and updated ${result.updated} existing ASINs. ${result.skipped} skipped due to errors.`
-      });
+      setImportSuccess(`Successfully imported ${result.imported} ASINs and updated ${result.updated} existing ASINs. ${result.skipped} skipped due to errors.`);
       
       // Refresh ASINs list
-      refetchASINs();
+      refetch();
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Import failed');
-      setImportResult({
-        success: false,
-        message: 'Import Failed',
-        details: error instanceof Error ? error.message : 'Unknown error occurred during import'
-      });
     } finally {
-      setImporting(false);
-      setShowImportModal(false);
+      setImporting(false); 
     }
   };
 
