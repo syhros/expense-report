@@ -79,7 +79,7 @@ export const useASINs = () => {
   return { asins, loading, error, refetch: fetchASINs };
 };
 
-export const useAllASINs = () => {
+const useAllASINs = () => {
   const [asins, setAsins] = useState<ASIN[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +129,7 @@ export const useASINsWithMetrics = () => {
   return { asins, loading, error, refetch: fetchASINs };
 };
 
-export const useTransactions = () => {
+const useTransactions = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

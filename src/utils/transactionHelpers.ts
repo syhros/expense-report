@@ -1,5 +1,5 @@
 // Transaction CSV template and import helpers
-export const generateTransactionTemplate = (): string => {
+const generateTransactionTemplate = (): string => {
   const headers = [
     'TXN ID',
     'Ordered Date',
@@ -79,7 +79,7 @@ export const downloadTransactionTemplate = () => {
   }
 };
 
-export const parseCSVLine = (line: string): string[] => {
+const parseCSVLine = (line: string): string[] => {
   const result: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -101,7 +101,7 @@ export const parseCSVLine = (line: string): string[] => {
   return result;
 };
 
-export const validateTransactionData = (data: any): { isValid: boolean; errors: string[] } => {
+const validateTransactionData = (data: any): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   
   if (!data.ordered_date || data.ordered_date.trim() === '') {
@@ -149,6 +149,45 @@ const parseNumericValue = (value: string | undefined, defaultValue: number = 0):
   
   const parsed = parseFloat(cleaned);
   return isNaN(parsed) ? defaultValue : parsed;
+};
+
+// Helper function to convert various date formats to YYYY-MM-DD
+const convertDateFormat = (dateString: string): string => {
+  if (!dateString) return '';
+  
+  // Try to parse as YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return dateString;
+  }
+
+  // Try to parse as DD/MM/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateString)) {
+    const [day, month, year] = dateString.split('/');
+    return `${year}-${month}-${day}`;
+  }
+
+  // Try to parse as MM/DD/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateString)) {
+    const [month, day, year] = dateString.split('/');
+    return `${year}-${month}-${day}`;
+  }
+
+  // Try to parse as YYYY/MM/DD
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(dateString)) {
+    return dateString.replace(/\//g, '-');
+  }
+
+  // Fallback for other formats (e.g., ISO strings)
+  try {
+    const date = new Date(dateString);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().split('T')[0];
+    }
+  } catch (e) {
+    // Ignore parsing errors, return empty string
+  }
+
+  return '';
 };
 
 const parseIntegerValue = (value: string | undefined, defaultValue: number = 1): number => {
@@ -262,13 +301,13 @@ export const parseTransactionCSV = (csvContent: string): { data: any[]; errors: 
     
     const rowData = {
       txn_id: columnIndices.txn_id !== undefined ? values[columnIndices.txn_id]?.replace(/"/g, '').trim() || '' : '',
-      ordered_date: columnIndices.ordered_date !== undefined ? values[columnIndices.ordered_date]?.replace(/"/g, '').trim() || '' : '',
-      delivery_date: columnIndices.delivery_date !== undefined ? values[columnIndices.delivery_date]?.replace(/"/g, '').trim() || '' : '',
+      ordered_date: convertDateFormat(columnIndices.ordered_date !== undefined ? values[columnIndices.ordered_date]?.replace(/"/g, '').trim() || '' : ''),
+      delivery_date: convertDateFormat(columnIndices.delivery_date !== undefined ? values[columnIndices.delivery_date]?.replace(/"/g, '').trim() || '' : ''),
       supplier_name: columnIndices.supplier_name !== undefined ? values[columnIndices.supplier_name]?.replace(/"/g, '').trim() || '' : '',
       po_number: columnIndices.po_number !== undefined ? values[columnIndices.po_number]?.replace(/"/g, '').trim() || '' : '',
       category: columnIndices.category !== undefined ? values[columnIndices.category]?.replace(/"/g, '').trim() || 'Stock' : 'Stock',
       payment_method: columnIndices.payment_method !== undefined ? values[columnIndices.payment_method]?.replace(/"/g, '').trim() || 'AMEX Plat' : 'AMEX Plat',
-      status: columnIndices.status !== undefined ? values[columnIndices.status]?.replace(/"/g, '').trim() || 'ordered' : 'ordered',
+      status: columnIndices.status !== undefined ? values[columnIndices.status]?.replace(/"/g, '').trim() || 'pending' : 'pending',
       shipping_cost: parseNumericValue(columnIndices.shipping_cost !== undefined ? values[columnIndices.shipping_cost] : '', 0),
       notes: columnIndices.notes !== undefined ? values[columnIndices.notes]?.replace(/"/g, '').trim() || '' : '',
       asin: columnIndices.asin !== undefined ? values[columnIndices.asin]?.replace(/"/g, '').trim() || '' : '',
@@ -299,3 +338,6 @@ export const parseTransactionCSV = (csvContent: string): { data: any[]; errors: 
   
   return { data, errors };
 };
+
+// Export functions for external use
+export { generateTransactionTemplate, parseCSVLine, validateTransactionData, convertDateFormat };

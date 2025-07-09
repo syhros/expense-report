@@ -21,9 +21,86 @@ export interface ASIN {
   pack: number;
   shipped: number;
   category: string;
+  weight: number;
+  weight_unit: string;
+  user_id: string;
+  fnsku: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Shipping-related interfaces
+export interface Shipment {
+  id: string;
+  name: string;
   user_id: string;
   created_at: string;
   updated_at: string;
+  total_asins: number;
+  total_units: number;
+  total_weight: number;
+}
+
+export interface PackGroup {
+  id: string;
+  shipment_id: string;
+  name: string;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+  total_boxes: number;
+  total_units: number;
+  total_weight: number;
+}
+
+export interface Box {
+  id: string;
+  pack_group_id: string;
+  name: string;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+  weight: number;
+  width: number;
+  length: number;
+  height: number;
+  total_units: number;
+}
+
+export interface PackGroupItem {
+  id: string;
+  pack_group_id: string;
+  asin: string;
+  sku: string;
+  title: string;
+  prep_type: string;
+  expected_quantity: number;
+  boxed_quantities: { [boxId: string]: number };
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+  order_index: number;
+}
+
+// Extended interfaces for UI components
+export interface PackGroupItemWithASINDetails extends PackGroupItem {
+  asin_details?: ASIN;
+  total_boxed: number;
+  remaining: number;
+  total_weight: number;
+}
+
+export interface BoxWithItems extends Box {
+  items: PackGroupItemWithASINDetails[];
+}
+
+export interface PackGroupWithDetails extends PackGroup {
+  boxes: BoxWithItems[];
+  items: PackGroupItemWithASINDetails[];
+}
+
+export interface ShipmentWithDetails extends Shipment {
+  pack_groups: PackGroupWithDetails[];
 }
 
 export interface Transaction {
@@ -37,6 +114,7 @@ export interface Transaction {
   status: string;
   shipping_cost: number;
   notes: string;
+  is_directors_loan?: boolean;
   user_id: string;
   created_at: string;
   updated_at: string;
@@ -139,6 +217,7 @@ export interface TransactionWithMetrics extends Transaction {
   totalCost: number;
   estimatedProfit: number;
   roi: number;
+  isDirectorsLoan: boolean;
   items?: TransactionItemDisplay[];
 }
 

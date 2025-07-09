@@ -189,15 +189,80 @@ export const findOrCreateASIN = async (asinData: Partial<ASIN>): Promise<ASIN> =
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
-  // First try to find existing ASIN
+  // Try to find existing ASIN
   if (asinData.asin) {
     const existing = await getASINByCode(asinData.asin);
     if (existing) {
+      // ASIN exists - check if we need to update it with better data
+      const updates: Partial<ASIN> = {};
+      
+      // Helper function to check if a value is empty or default
+      const isEmptyOrDefault = (value: any, defaultValues: any[]) => {
+        return !value || value === '' || defaultValues.includes(value);
+      };
+      
+      // Update title if provided and current title is empty or default
+      if (asinData.title && asinData.title.trim() !== '' && 
+          isEmptyOrDefault(existing.title, ['', 'No title'])) {
+        updates.title = asinData.title;
+      }
+      
+      // Update brand if provided and current brand is empty or default
+      if (asinData.brand && asinData.brand.trim() !== '' && 
+          isEmptyOrDefault(existing.brand, ['', 'No brand'])) {
+        updates.brand = asinData.brand;
+      }
+      
+      // Update image_url if provided and current image_url is empty or default
+      if (asinData.image_url && asinData.image_url.trim() !== '' && 
+          isEmptyOrDefault(existing.image_url, ['', 'No image'])) {
+        updates.image_url = asinData.image_url;
+      }
+      
+      // Update weight if provided and current weight is 0 or not set
+      if (asinData.weight !== undefined && asinData.weight > 0 && 
+          (!existing.weight || existing.weight === 0)) {
+        updates.weight = asinData.weight;
+      }
+      
+      // Update weight_unit if provided and current weight_unit is empty or default
+      if (asinData.weight_unit && asinData.weight_unit.trim() !== '' && 
+          isEmptyOrDefault(existing.weight_unit, ['', 'g'])) {
+        updates.weight_unit = asinData.weight_unit;
+      }
+      
+      // Update FNSKU if provided and current FNSKU is empty or null
+      if (asinData.fnsku && asinData.fnsku.trim() !== '' && 
+          isEmptyOrDefault(existing.fnsku, ['', null])) {
+        updates.fnsku = asinData.fnsku;
+      }
+      
+      // Update type if provided and different from current
+      if (asinData.type && asinData.type !== existing.type) {
+        updates.type = asinData.type;
+      }
+      
+      // Update pack if provided and different from current
+      if (asinData.pack !== undefined && asinData.pack !== existing.pack) {
+        updates.pack = asinData.pack;
+      }
+      
+      // Update category if provided and different from current
+      if (asinData.category && asinData.category !== existing.category) {
+        updates.category = asinData.category;
+      }
+      
+      // If there are updates to make, update the existing ASIN
+      if (Object.keys(updates).length > 0) {
+        return await updateASIN(existing.id, updates);
+      }
+      
+      // No updates needed, return existing ASIN
       return existing;
     }
   }
 
-  // Create new ASIN if not found
+  // ASIN doesn't exist - create new one
   const newASIN = {
     asin: asinData.asin || '',
     title: asinData.title || '',
@@ -207,17 +272,12 @@ export const findOrCreateASIN = async (asinData: Partial<ASIN>): Promise<ASIN> =
     pack: asinData.pack || 1,
     shipped: asinData.shipped || 0,
     category: asinData.category || 'Stock', // Default to Stock category
-    user_id: user.id
+    weight: asinData.weight || 0,
+    weight_unit: asinData.weight_unit || 'g',
+    fnsku: asinData.fnsku || null
   };
 
-  const { data, error } = await supabase
-    .from('asins')
-    .insert(newASIN)
-    .select()
-    .single();
-  
-  if (error) throw error;
-  return data;
+  return await createASIN(newASIN);
 };
 
 export const getASINsWithMetrics = async (): Promise<ASINWithMetrics[]> => {
@@ -277,67 +337,15 @@ export const createASIN = async (asin: Omit<ASIN, 'id' | 'user_id' | 'created_at
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
-  // Check if ASIN already exists for this user
-  const { data: existingASIN, error: checkError } = await supabase
+  // Create new ASIN record
+  const { data, error } = await supabase
     .from('asins')
-    .select('*')
-    .eq('asin', asin.asin)
-    .eq('user_id', user.id)
+    .insert({ ...asin, user_id: user.id })
+    .select()
     .single();
-
-  if (checkError && checkError.code !== 'PGRST116') {
-    // PGRST116 is "not found" error, which is expected for new ASINs
-    throw checkError;
-  }
-
-  if (existingASIN) {
-    // ASIN exists - update title and image_url if provided and current values are empty/default
-    const updates: Partial<ASIN> = {};
-    
-    // Update title if provided and current title is empty or default
-    if (asin.title && asin.title.trim() !== '' && 
-        (!existingASIN.title || existingASIN.title.trim() === '' || existingASIN.title === 'No title')) {
-      updates.title = asin.title;
-    }
-    
-    // Update image_url if provided and current image_url is empty or default
-    if (asin.image_url && asin.image_url.trim() !== '' && 
-        (!existingASIN.image_url || existingASIN.image_url.trim() === '' || existingASIN.image_url === 'No image')) {
-      updates.image_url = asin.image_url;
-    }
-
-    // Update brand if provided and current brand is empty or default
-    if (asin.brand && asin.brand.trim() !== '' && 
-        (!existingASIN.brand || existingASIN.brand.trim() === '' || existingASIN.brand === 'No brand')) {
-      updates.brand = asin.brand;
-    }
-
-    // If there are updates to make, update the existing ASIN
-    if (Object.keys(updates).length > 0) {
-      const { data: updatedData, error: updateError } = await supabase
-        .from('asins')
-        .update(updates)
-        .eq('id', existingASIN.id)
-        .select()
-        .single();
-      
-      if (updateError) throw updateError;
-      return updatedData;
-    }
-    
-    // No updates needed, return existing ASIN
-    return existingASIN;
-  } else {
-    // ASIN doesn't exist - create new one
-    const { data, error } = await supabase
-      .from('asins')
-      .insert({ ...asin, user_id: user.id })
-      .select()
-      .single();
-    
-    if (error) throw error;
-    return data;
-  }
+  
+  if (error) throw error;
+  return data;
 };
 
 export const updateASIN = async (id: string, updates: Partial<ASIN>): Promise<ASIN> => {
@@ -470,11 +478,16 @@ export const getTransactionsWithMetrics = async (): Promise<TransactionWithMetri
     const estimatedProfit = totalRevenue - totalCost - totalFees; // Revenue - (COG + Shipping) - Fees
     const roi = itemsCostOfGoods > 0 ? (estimatedProfit / itemsCostOfGoods) * 100 : 0; // ROI based on COG only
 
+    // Check if this is a Director's Loan transaction - check both the notes field and the is_directors_loan flag
+    const isDirectorsLoan = transaction.is_directors_loan || 
+                           (transaction.notes?.toLowerCase().includes("director's loan") || false);
+
     return {
       ...transaction,
       totalCost,
       estimatedProfit,
-      roi
+      roi,
+      isDirectorsLoan: isDirectorsLoan
     };
   });
 };

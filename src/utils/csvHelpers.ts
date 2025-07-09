@@ -1,6 +1,6 @@
 // CSV helper functions for ASIN management
-export const generateASINTemplate = (): string => {
-  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category', 'buy_price', 'sell_price', 'est_fee'];
+const generateASINTemplate = (): string => {
+  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category', 'buy_price', 'sell_price', 'est_fee', 'weight'];
   return headers.join(',') + '\n';
 };
 
@@ -20,7 +20,7 @@ export const downloadCSVTemplate = () => {
   }
 };
 
-export const parseCSVLine = (line: string): string[] => {
+const parseCSVLine = (line: string): string[] => {
   const result: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -42,7 +42,7 @@ export const parseCSVLine = (line: string): string[] => {
   return result;
 };
 
-export const validateASINData = (data: any): { isValid: boolean; errors: string[] } => {
+const validateASINData = (data: any): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   
   // Required fields validation
@@ -79,6 +79,11 @@ export const validateASINData = (data: any): { isValid: boolean; errors: string[
     errors.push('Estimated fee must be a valid number');
   }
   
+  // Optional weight field validation
+  if (data.weight && isNaN(parseFloat(data.weight))) {
+    errors.push('Weight must be a valid number');
+  }
+  
   return {
     isValid: errors.length === 0,
     errors
@@ -109,7 +114,8 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
     { name: 'category', variations: ['category'] },
     { name: 'buy_price', variations: ['buy_price', 'buy price', 'cost', 'cog', 'purchase price', 'purchase_price'] },
     { name: 'sell_price', variations: ['sell_price', 'sell price', 'selling price', 'selling_price', 'price'] },
-    { name: 'est_fee', variations: ['est_fee', 'est fee', 'estimated fee', 'estimated_fee', 'fee', 'fees', 'amazon fee'] }
+    { name: 'est_fee', variations: ['est_fee', 'est fee', 'estimated fee', 'estimated_fee', 'fee', 'fees', 'amazon fee'] },
+    { name: 'weight', variations: ['weight', 'weight_g', 'weight_kg', 'product weight'] }
   ];
   
   // Find column indices using improved matching
@@ -159,6 +165,12 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
     const estFee = columnIndices.est_fee !== undefined ? 
       parseFloat(values[columnIndices.est_fee]?.replace(/"/g, '').trim() || '0') : 0;
 
+    const weight = columnIndices.weight !== undefined ? 
+      parseFloat(values[columnIndices.weight]?.replace(/"/g, '').trim() || '0') : 0;
+      
+    const fnsku = columnIndices.fnsku !== undefined ?
+      values[columnIndices.fnsku]?.replace(/"/g, '').trim() || '' : '';
+      
     const rowData = {
       asin: values[columnIndices.asin]?.replace(/"/g, '').trim() || '',
       image_url: values[columnIndices.image_url]?.replace(/"/g, '').trim() || '',
@@ -170,6 +182,9 @@ export const parseASINCSV = (csvContent: string): { data: any[]; errors: string[
       buy_price: isNaN(buyPrice) ? 0 : buyPrice,
       sell_price: isNaN(sellPrice) ? 0 : sellPrice,
       est_fee: isNaN(estFee) ? 0 : estFee,
+      weight: isNaN(weight) ? 0 : weight,
+      weight_unit: 'g', // Default to grams for CSV imports
+      fnsku: fnsku,
       has_pricing: (buyPrice > 0 || sellPrice > 0 || estFee > 0)
     };
     

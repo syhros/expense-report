@@ -2,7 +2,7 @@
 import { ASIN } from '../types/database';
 
 export const generateASINExportCSV = (asins: ASIN[]): string => {
-  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category'];
+  const headers = ['ASIN', 'Image URL', 'Title', 'Type', 'Size', 'Brand', 'Category', 'Weight', 'Weight Unit', 'FNSKU'];
   
   const csvRows = asins.map(asin => [
     asin.asin || '',
@@ -11,7 +11,10 @@ export const generateASINExportCSV = (asins: ASIN[]): string => {
     asin.type || 'Single',
     asin.pack?.toString() || '1',
     asin.brand || '',
-    asin.category || 'Stock'
+    asin.category || 'Stock',
+    asin.weight?.toString() || '0',
+    asin.weight_unit || 'g',
+    asin.fnsku || ''
   ]);
   
   let csvContent = headers.join(',') + '\n';

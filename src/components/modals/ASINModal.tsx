@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Package, FileText, Calendar, Tag, Image } from 'lucide-react';
+import { X, Package, FileText, Calendar, Tag, Image, Scale, Weight, Barcode } from 'lucide-react';
 import { createASIN, updateASIN, getTransactionItems } from '../../services/database';
 import { ASIN, TransactionItem } from '../../types/database';
 import { formatCurrency } from '../../utils/formatters';
@@ -24,7 +24,9 @@ const ASINModal: React.FC<ASINModalProps> = ({
     image_url: '',
     type: 'Single',
     pack: 1,
-    category: 'Stock'
+    category: 'Stock',
+    weight: 0,
+    weight_unit: 'g'
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +50,9 @@ const ASINModal: React.FC<ASINModalProps> = ({
         image_url: asin.image_url || '',
         type: asin.type || 'Single',
         pack: asin.pack || 1,
-        category: asin.category || 'Stock'
+        category: asin.category || 'Stock',
+        weight: asin.weight || 0,
+        weight_unit: asin.weight_unit || 'g'
       });
       loadMetrics(asin.asin);
     } else {
@@ -59,7 +63,9 @@ const ASINModal: React.FC<ASINModalProps> = ({
         image_url: '',
         type: 'Single',
         pack: 1,
-        category: 'Stock'
+        category: 'Stock',
+        weight: 0,
+        weight_unit: 'g'
       });
       setMetrics({
         averageCOG: 0,
@@ -133,7 +139,8 @@ const ASINModal: React.FC<ASINModalProps> = ({
     const { name, value } = e.target;
     const newFormData = { 
       ...formData, 
-      [name]: name === 'pack' ? parseInt(value) || 1 : value 
+      [name]: name === 'pack' ? parseInt(value) || 1 : 
+               name === 'weight' ? parseFloat(value) || 0 : value 
     };
     setFormData(newFormData);
 
@@ -332,6 +339,54 @@ const ASINModal: React.FC<ASINModalProps> = ({
                       </div>
                     </div>
 
+                    <div className="flex space-x-4">
+  <div className="flex-1 relative">
+    <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
+      <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+        <Scale className="h-5 w-5 text-blue-400" /> {/* Changed icon to Scale */}
+      </div>
+      <input
+        type="number" // Changed type to number for better input handling
+        id="weight"
+        name="weight"
+        value={formData.weight}
+        onChange={handleChange}
+        className="w-full pl-12 pr-4 py-4 bg-transparent text-white placeholder-transparent focus:outline-none"
+        placeholder="0"
+        step="0.001" // Allow decimal values for weight
+        min="0"
+      />
+      <label
+        htmlFor="weight"
+        className="absolute left-10 -top-2.5 bg-gray-800 px-2 text-sm font-medium text-blue-400"
+      >
+        Weight
+      </label>
+    </div>
+  </div>
+
+  <div className="w-24 relative"> {/* Adjust width as needed */}
+    <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
+      <select
+        id="weight_unit"
+        name="weight_unit"
+        value={formData.weight_unit}
+        onChange={handleChange}
+        className="w-full px-3 py-4 bg-transparent text-white focus:outline-none appearance-none text-center"
+      >
+        <option value="g" className="bg-gray-800 text-white">g</option>
+        <option value="kg" className="bg-gray-800 text-white">kg</option>
+      </select>
+      <label
+        htmlFor="weight_unit"
+        className="absolute left-2 -top-2.5 bg-gray-800 px-1 text-xs font-medium text-blue-400"
+      >
+        Unit
+      </label>
+    </div>
+  </div>
+</div>
+
                     {/* Type and Pack Size */}
                     <div className="flex space-x-4">
                       <div className="flex-1 relative">
@@ -482,6 +537,30 @@ const ASINModal: React.FC<ASINModalProps> = ({
                       <p className="text-2xl font-bold text-blue-400">{formData.pack}</p>
                       <p className="text-blue-400 text-sm">Pack Size</p>
                     </div>
+                  </div>
+                </div>
+                
+                {/* FNSKU */}
+                <div className="relative">
+                  <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
+                    <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                      <Barcode className="h-5 w-5 text-blue-400" />
+                    </div>
+                    <input
+                      type="text"
+                      id="fnsku"
+                      name="fnsku"
+                      value={formData.fnsku}
+                      onChange={handleChange}
+                      className="w-full pl-12 pr-4 py-4 bg-transparent text-white placeholder-transparent focus:outline-none"
+                      placeholder="FNSKU"
+                    />
+                    <label
+                      htmlFor="fnsku"
+                      className="absolute left-10 -top-2.5 bg-gray-800 px-2 text-sm font-medium text-blue-400"
+                    >
+                      FNSKU
+                    </label>
                   </div>
                 </div>
 

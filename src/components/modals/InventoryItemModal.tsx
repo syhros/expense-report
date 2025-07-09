@@ -175,6 +175,16 @@ const InventoryItemModal: React.FC<InventoryItemModalProps> = ({
                     <p className="text-gray-400 text-sm">Type</p>
                     <p className="text-white">{item.type || 'Single'} {item.type === 'Bundle' && item.pack > 1 ? `(Pack of ${item.pack})` : ''}</p>
                   </div>
+                  
+                  <div>
+                    <p className="text-gray-400 text-sm">Weight</p>
+                    <p className="text-white">
+                      {item.weight && item.weight > 0 
+                        ? `${item.weight}${item.weight_unit || 'g'}` 
+                        : 'Not specified'
+                      }
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

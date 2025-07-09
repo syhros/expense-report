@@ -31,14 +31,23 @@ export const formatRelativeDate = (dateString: string | null): string => {
   return `${Math.floor(diffInDays / 365)} years ago`;
 };
 
+const formatWeightInKg = (weightInGrams: number): string => {
+  const weightInKg = weightInGrams / 1000;
+  return `${weightInKg.toFixed(2)} kg`;
+};
+
 export const getStatusColor = (status: string): string => {
   switch (status.toLowerCase()) {
     case 'delivered':
     case 'fully received':
+    case 'complete':
+    case 'collected':
       return 'bg-green-900 text-green-300';
     case 'in transit':
+    case 'ordered':
       return 'bg-blue-900 text-blue-300';
     case 'processing':
+    case 'partially delivered':
       return 'bg-yellow-900 text-yellow-300';
     case 'pending':
       return 'bg-orange-900 text-orange-300';
@@ -48,6 +57,8 @@ export const getStatusColor = (status: string): string => {
       return 'bg-gray-700 text-gray-300';
   }
 };
+
+export { formatWeightInKg };
 
 export const truncateText = (text: string, maxLength: number): string => {
   if (text.length <= maxLength) return text;

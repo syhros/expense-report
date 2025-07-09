@@ -8,7 +8,8 @@ import {
   DollarSign, 
   Archive, 
   ShoppingCart, 
-  BarChart3,
+  BarChart3, 
+  Package,
   TrendingUp,
   LogOut,
   BookOpen
@@ -23,7 +24,7 @@ const navItems = [
   { label: 'ASINs', icon: Tag, path: '/asins' },
   { label: 'Budget', icon: DollarSign, path: '/budget' },
   { label: 'Inventory', icon: Archive, path: '/inventory' },
-  { label: 'Seller Central', icon: ShoppingCart, path: '/seller' },
+  { label: 'Shipping', icon: Package, path: '/shipping' },
   { label: 'Reports', icon: BarChart3, path: '/reports' }
 ];
 

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Calendar, Building2, CreditCard, Package, Upload, FileText, ChevronLeft, ChevronRight, ZoomIn, Loader2, Edit, ChevronDown, User } from 'lucide-react';
 import { createTransaction, updateTransaction, getSuppliers, createTransactionItem, updateTransactionItem, deleteTransactionItem, getTransactionItems, createGeneralLedgerTransaction } from '../../services/database';
+import { deleteTransaction } from '../../services/database';
 import { uploadReceipt, getReceiptUrl, deleteReceipt, listReceipts } from '../../services/storage';
 import { useSuppliers, useCategories, useUniqueDirectors } from '../../hooks/useData';
 import TransactionItemModal from './TransactionItemModal';
+import SupplierModal from './SupplierModal';
 import { Transaction, TransactionItemDisplay, ASIN } from '../../types/database';
 import { formatCurrency } from '../../utils/formatters';
 
@@ -53,6 +55,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
   const [currentReceiptIndex, setCurrentReceiptIndex] = useState(0);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [selectedDirectorsLoan, setSelectedDirectorsLoan] = useState<string>('No');
 
   // Simplified categories for purchase orders
@@ -260,6 +263,34 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
     );
   };
 
+  const handleDeleteTransaction = async () => {
+    if (!transaction) return;
+    
+    const confirmed = window.confirm(
+      `Are you sure you want to delete this purchase order? This action cannot be undone.`
+    );
+    
+    if (!confirmed) return;
+    
+    setLoading(true);
+    setError(null);
+
+    try {
+      await deleteTransaction(transaction.id);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete transaction');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSupplierSuccess = () => {
+    // Refresh suppliers list - this will be handled by the useSuppliers hook
+    setShowSupplierModal(false);
+  };
+
   const isValidUUID = (id: string): boolean => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     return uuidRegex.test(id);
@@ -270,6 +301,10 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
     
     // Confirmation for Director's Loan
     if (selectedDirectorsLoan !== 'No') {
+      // Update notes to include Director's Loan information
+      const directorLoanNote = `Director's Loan from ${selectedDirectorsLoan}`;
+      formData.notes = formData.notes ? `${formData.notes}\n${directorLoanNote}` : directorLoanNote;
+      
       const totalCost = items.reduce((sum, item) => sum + item.totalCost, 0) + formData.shipping_cost;
       const confirmed = window.confirm(
         `Are you sure you want to allocate this purchase order (${formatCurrency(totalCost)}) as a Director's Loan from ${selectedDirectorsLoan}?`
@@ -285,8 +320,14 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
     try {
       let savedTransaction;
       
+      // Prepare transaction data with Director's Loan flag
+      const transactionData = {
+        ...formData,
+        is_directors_loan: selectedDirectorsLoan !== 'No'
+      };
+      
       if (transaction) {
-        savedTransaction = await updateTransaction(transaction.id, formData);
+        savedTransaction = await updateTransaction(transaction.id, transactionData);
         
         // Handle transaction items for existing transaction
         const originalItemIds = new Set(originalItems.map(item => item.id));
@@ -326,7 +367,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
           }
         }
       } else {
-        savedTransaction = await createTransaction(formData);
+        savedTransaction = await createTransaction(transactionData);
         
         // Create new items for new transaction
         for (const item of items) {
@@ -561,7 +602,8 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
 
             {/* Row 2: Supplier, Category, PO Number, Shipping Cost, Directors Loan */}
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-              <div className="relative">
+              <div className="relative flex space-x-2">
+                <div className="flex-1 relative">
                 <div className="relative border-2 border-blue-500/50 rounded-xl bg-gray-800/50 backdrop-blur-sm">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
                     <Building2 className="h-5 w-5 text-blue-400" />
@@ -587,6 +629,15 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                     Supplier
                   </label>
                 </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSupplierModal(true)}
+                  className="bg-green-600/80 backdrop-blur-sm hover:bg-green-700 text-white px-3 py-4 rounded-xl transition-all duration-300 hover:scale-102 flex items-center justify-center"
+                  title="Add New Supplier"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
               </div>
 
               <div className="relative">
@@ -773,7 +824,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
                             <div className="text-red-400 text-xs">VAT (20%)</div>
                             <div className="text-white font-medium">{formatCurrency(((item.est_fees || 0) * 0.2))}</div>
                           </div>
-                          <div className="bg-purple-900/30 rounded-lg px-3 py-2 text-center">
+                          <div className="bg-purple-900/30 rounded-lg px-1 py-2 text-center">
                             <div className="text-purple-400 text-xs">Total Cost</div>
                             <div className="text-white font-medium">{formatCurrency(item.totalCost)}</div>
                           </div>
@@ -949,6 +1000,17 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
 
             {/* Actions */}
             <div className="flex justify-end space-x-3 pt-6 border-t border-gray-700/50">
+              {transaction && (
+                <button
+                  type="button"
+                  onClick={handleDeleteTransaction}
+                  disabled={loading}
+                  className="bg-red-600/80 backdrop-blur-sm hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-xl transition-all duration-300 hover:scale-102 flex items-center space-x-2"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Delete</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -971,6 +1033,13 @@ const TransactionModal: React.FC<TransactionModalProps> = ({
           </form>
         </div>
       </div>
+      
+      {/* Supplier Modal */}
+      <SupplierModal
+        isOpen={showSupplierModal}
+        onClose={() => setShowSupplierModal(false)}
+        onSuccess={handleSupplierSuccess}
+      />
 
       {/* Preview Modal */}
       {showPreviewModal && (

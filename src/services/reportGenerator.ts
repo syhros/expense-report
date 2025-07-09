@@ -5,7 +5,6 @@ import { supabase } from '../lib/supabase';
 import { TransactionWithMetrics, TransactionItem, ASIN, GeneralLedgerTransaction } from '../types/database';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { generateASINExportCSV } from '../utils/asinHelpers';
-import { importTransactionsFromCSV } from './transactionImporter';
 import { createGeneralLedgerTransaction, createSupplier, getSuppliers } from './database';
 
 // Extend jsPDF type to include autoTable
